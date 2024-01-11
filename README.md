@@ -6,7 +6,7 @@ A demake of portal for the Nintendo 64
 
 First, you will need to setup [modern sdk](https://crashoveride95.github.io/n64hbrew/modernsdk/startoff.html)
 
-Next, you will need to download blender 2.9 or higher. Then set the environment variable `BLENDER_2_9` to be the absolute path where the blender executable is located on your system.
+Next, you will need to download blender 3.0 or higher. Then set the environment variable `BLENDER_3_0` to be the absolute path where the blender executable is located on your system.
 
 <br />
 
@@ -63,12 +63,12 @@ docker build . -t portal64
 Then build
 ```sh
 # Set the environment variable
-BLENDER_2_9=/blender/blender
+BLENDER_3_0=/blender/blender
 
 # Build using docker
 docker run \
     -v /home/james/Blender/blender-2.93.1-linux-x64:/blender \
-    -e BLENDER_2_9 -v /home/james/portal/portal64/vpk:/usr/src/app/vpk \
+    -e BLENDER_3_0 -v /home/james/portal/portal64/vpk:/usr/src/app/vpk \
     -t -v /home/james/portal/portal64/docker-output:/usr/src/app/build portal64
 ```
 
@@ -84,20 +84,28 @@ Where `/home/james/Blender/blender-2.93.1-linux-x64` is the folder where Blender
 
 ## Current TODO list
 
-- [ ] Fix bug where opening a portal can trigger a teleportation
-- [ ] Turn level indicator board into a game object
+- [ ] stop looping sounds betwen levels
+- [ ] calculateBarycentricCoords when two points are the same
+- [ ] Z buffer allocation
+- [ ] Release grabbed objects when line of sight is cut
+- [ ] Correct elevator timing
+- [ ] Elevator and door sounds
 - [ ] Presort portal gun polygon order
-- [ ] Implement level transitions
-    - Implement loading levels from the cartridge
-- [ ] Change the way player standing logic works
 - [ ] Cube dispenser
-- [ ] NAN in overlap
-- [x] Implement "Elevator"
-- [x] Implement "Emancipation grid"
-- [x] Cut holes in portal walls
-- [x] Get an optimized build working
-- [x] Portal animations
-- [x] Figure out why clip is silent
-- [x] Fix z fighting in elevator
-- [x] Fix crash
-- [x] Determine why bad gfx cause RDP crash
+- [ ] Signage should not always be on
+- [ ] Camera shake
+- [x] level transition jump
+- [x] collide player with dynamic objects
+- [x] Render objects intersecting portals differently
+- [x] Sliding against walls
+- [x] It is too easy to fall through portals
+- [x] Change the way player standing logic works
+- [x] crash on level transition
+- [x] Prevent Glados from talking over herself
+- [x] NAN in overlap
+- [x] Turn level indicator board into a game object
+- [x] kill plane
+- [x] Portal gun pedistal
+- [x] Fix portal overlapping bug
+- [x] Fix bug where opening a portal can trigger a teleportation
+- [x] Implement level transitions

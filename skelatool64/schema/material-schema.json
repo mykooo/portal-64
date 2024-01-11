@@ -194,7 +194,7 @@
                                         "TEXEL0_ALPHA",
                                         "TEXEL1_ALPHA",
                                         "PRIMITIVE_ALPHA",
-                                        "SHADED_ALPHA",
+                                        "SHADE_ALPHA",
                                         "ENVIRONMENT_ALPHA",
                                         "LOD_FRACTION",
                                         "PRIM_LOD_FRAC",
@@ -356,6 +356,9 @@
                     "type": "number",
                     "minimum": 0,
                     "maximum": 255
+                },
+                "bypassEffects": {
+                    "type": "boolean"
                 }
             },
             "required": [
@@ -467,6 +470,9 @@
                         },
                         "selectChannel": {
                             "enum": ["r", "g", "b"]
+                        },
+                        "usePallete": {
+                            "type": "string"
                         }
                     },
                     "required": [
@@ -700,6 +706,9 @@
                 },
                 "normalSource": {
                     "enum": ["normal", "tangent", "-tangent", "bitangent", "-bitangent"]
+                },
+                "excludeFromOutput": {
+                    "type": "boolean"
                 }
             }
         }

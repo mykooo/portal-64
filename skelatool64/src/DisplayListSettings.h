@@ -21,11 +21,14 @@ struct DisplayListSettings {
     std::map<std::string, std::shared_ptr<Material>> mMaterials;
     std::string mDefaultMaterialName;
     std::string mForceMaterialName;
+    std::string mForcePallete;
     MaterialState mDefaultMaterialState;
     aiQuaternion mRotateModel;
     bool mExportAnimation;
     bool mExportGeometry;
     bool mIncludeCulling;
+    bool mBonesAsVertexGroups;
+    bool mTargetCIBuffer;
 
     aiMatrix4x4 CreateGlobalTransform() const;
     aiMatrix4x4 CreateCollisionTransform() const;

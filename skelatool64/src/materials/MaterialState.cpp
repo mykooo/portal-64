@@ -55,7 +55,10 @@ TextureCoordinateState::TextureCoordinateState():
 
 TileState::TileState():
     isOn(false),
+    format(G_IM_FMT::G_IM_FMT_RGBA),
+    size(G_IM_SIZ::G_IM_SIZ_16b),
     line(0),
+    tmem(0),
     pallete(0) {
 
 }
@@ -417,17 +420,67 @@ std::string buildClampAndWrap(bool wrap, bool mirror) {
     return result.str();
 }
 
-void generateTile(CFileDefinition& fileDef, const MaterialState& from, const TileState& to, int tileIndex, StructureDataChunk& output) {
+void generateTile(CFileDefinition& fileDef, const MaterialState& from, const TileState& to, int tileIndex, StructureDataChunk& output, bool targetCIBuffer) {
     if (!to.isOn) {
         return;
     }
 
     bool needsToLoadImage = to.texture != nullptr;
 
+    std::shared_ptr<PalleteDefinition> palleteToLoad = (to.texture && !targetCIBuffer) ? to.texture->GetPallete() : nullptr;
+
     for (int i = 0; i < MAX_TILE_COUNT && needsToLoadImage; ++i) {
         if (from.tiles[i].texture == to.texture && from.tiles[i].tmem == to.tmem) {
             needsToLoadImage = false;
         }
+
+        if (from.tiles[i].texture && from.tiles[i].texture->GetPallete() == palleteToLoad) {
+            palleteToLoad = nullptr;
+        }
+    }
+
+    if (palleteToLoad) {
+        std::string palleteName;
+        if (!fileDef.GetResourceName(palleteToLoad.get(), palleteName)) {
+            std::cerr << "Texture " << palleteToLoad->Name() << " needs to be added to the file definition before being used in a material" << std::endl;
+            return;
+        }
+
+        output.Add(std::unique_ptr<MacroDataChunk>(new MacroDataChunk("gsDPTileSync")));
+
+        std::unique_ptr<MacroDataChunk> setTextureImage(new MacroDataChunk("gsDPSetTextureImage"));
+        setTextureImage->AddPrimitive(nameForImageFormat(G_IM_FMT::G_IM_FMT_RGBA));
+        setTextureImage->AddPrimitive(std::string(nameForImageSize(G_IM_SIZ::G_IM_SIZ_16b)) + "_LOAD_BLOCK");
+        setTextureImage->AddPrimitive(1);
+        setTextureImage->AddPrimitive(palleteName);
+        output.Add(std::move(setTextureImage));
+
+        std::unique_ptr<MacroDataChunk> setTile(new MacroDataChunk("gsDPSetTile"));
+        setTile->AddPrimitive(nameForImageFormat(G_IM_FMT::G_IM_FMT_RGBA));
+        setTile->AddPrimitive(std::string(nameForImageSize(G_IM_SIZ::G_IM_SIZ_16b)) + "_LOAD_BLOCK");
+        setTile->AddPrimitive(0);
+        setTile->AddPrimitive(256);
+        setTile->AddPrimitive<const char*>("G_TX_LOADTILE");
+        setTile->AddPrimitive(0);
+        setTile->AddPrimitive(buildClampAndWrap(false, false));
+        setTile->AddPrimitive(0);
+        setTile->AddPrimitive(0);
+        setTile->AddPrimitive(buildClampAndWrap(false, false));
+        setTile->AddPrimitive(0);
+        setTile->AddPrimitive(0);
+        output.Add(std::move(setTile));
+
+        output.Add(std::unique_ptr<MacroDataChunk>(new MacroDataChunk("gsDPLoadSync")));
+
+        std::unique_ptr<MacroDataChunk> loadBlock(new MacroDataChunk("gsDPLoadBlock"));
+        loadBlock->AddPrimitive<const char*>("G_TX_LOADTILE");
+        loadBlock->AddPrimitive(0);
+        loadBlock->AddPrimitive(0);
+        loadBlock->AddPrimitive(palleteToLoad->LoadBlockSize());
+        loadBlock->AddPrimitive(palleteToLoad->DTX());
+        output.Add(std::move(loadBlock));
+
+        output.Add(std::unique_ptr<MacroDataChunk>(new MacroDataChunk("gsDPPipeSync")));
     }
 
     if (needsToLoadImage) {
@@ -529,7 +582,7 @@ void generateTexture(const TextureState& from, const TextureState& to, Structure
     output.Add(std::move(setTexture));
 }
 
-void generateMaterial(CFileDefinition& fileDef, const MaterialState& from, const MaterialState& to, StructureDataChunk& output) {
+void generateMaterial(CFileDefinition& fileDef, const MaterialState& from, const MaterialState& to, StructureDataChunk& output, bool targetCIBuffer) {
     output.Add(std::unique_ptr<DataChunk>(new MacroDataChunk("gsDPPipeSync")));
 
     generateEnumMacro((int)from.pipelineMode, (int)to.pipelineMode, "gsDPPipelineMode", gPipelineModeNames, output);
@@ -578,7 +631,7 @@ void generateMaterial(CFileDefinition& fileDef, const MaterialState& from, const
     generateTexture(from.textureState, to.textureState, output);
 
     for (int i = 0; i < MAX_TILE_COUNT; ++i) {
-        generateTile(fileDef, from, to.tiles[i], i, output);
+        generateTile(fileDef, from, to.tiles[i], i, output, targetCIBuffer);
     }
 
     // TODO fill color

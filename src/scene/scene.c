@@ -40,8 +40,16 @@ void sceneUpdateListeners(struct Scene* scene);
 void sceneInit(struct Scene* scene) {
     signalsInit(1);
 
-    cameraInit(&scene->camera, 70.0f, 0.125f * SCENE_SCALE, 40.0f * SCENE_SCALE);
-    playerInit(&scene->player, levelGetLocation(gCurrentLevel->startLocation));
+    cameraInit(&scene->camera, 70.0f, 0.125f * SCENE_SCALE, 30.0f * SCENE_SCALE);
+
+    struct Location* startLocation = levelGetLocation(gCurrentLevel->startLocation);
+    struct Location combinedLocation;
+    struct Vector3 startVelocity;
+    combinedLocation.roomIndex = startLocation->roomIndex;
+    transformConcat(&startLocation->transform, levelRelativeTransform(), &combinedLocation.transform);
+    quatMultVector(&startLocation->transform.rotation, levelRelativeVelocity(), &startVelocity);
+
+    playerInit(&scene->player, &combinedLocation, &startVelocity);
     sceneUpdateListeners(scene);
 
     portalInit(&scene->portals[0], 0);
@@ -90,7 +98,25 @@ void sceneInit(struct Scene* scene) {
         elevatorInit(&scene->elevators[i], &gCurrentLevel->elevators[i]);
     }
 
-    // scene->player.grabbing = &scene->decor[0]->collisionObject;
+    scene->pedestalCount = gCurrentLevel->pedestalCount;
+    scene->pedestals = malloc(sizeof(struct Pedestal) * scene->pedestalCount);
+    for (int i = 0; i < scene->pedestalCount; ++i) {
+        pedestalInit(&scene->pedestals[i], &gCurrentLevel->pedestals[i]);
+    }
+
+    scene->signageCount = gCurrentLevel->signageCount;
+    scene->signage = malloc(sizeof(struct Signage) * scene->signageCount);
+    for (int i = 0; i < scene->signageCount; ++i) {
+        signageInit(&scene->signage[i], &gCurrentLevel->signage[i]);
+    }
+
+    scene->boxDropperCount = gCurrentLevel->boxDropperCount;
+    scene->boxDroppers = malloc(sizeof(struct BoxDropper) * scene->boxDropperCount);
+    for (int i = 0; i < scene->boxDropperCount; ++i) {
+        boxDropperInit(&scene->boxDroppers[i], &gCurrentLevel->boxDroppers[i]);
+    }
+
+    scene->freeCameraOffset = gZeroVec;
 }
 
 void sceneRenderWithProperties(void* data, struct RenderProps* properties, struct RenderState* renderState) {
@@ -99,7 +125,7 @@ void sceneRenderWithProperties(void* data, struct RenderProps* properties, struc
     u64 visibleRooms = 0;
     staticRenderDetermineVisibleRooms(&properties->cullingInfo, properties->fromRoom, &visibleRooms);
 
-    int closerPortal = vector3DistSqrd(&properties->camera.transform.position, &scene->portals[0].transform.position) > vector3DistSqrd(&properties->camera.transform.position, &scene->portals[1].transform.position) ? 0 : 1;
+    int closerPortal = vector3DistSqrd(&properties->camera.transform.position, &scene->portals[0].transform.position) < vector3DistSqrd(&properties->camera.transform.position, &scene->portals[1].transform.position) ? 0 : 1;
     int otherPortal = 1 - closerPortal;
 
     for (int i = 0; i < 2; ++i) {
@@ -160,8 +186,13 @@ void sceneRenderPortalGun(struct Scene* scene, struct RenderState* renderState) 
     gSPPopMatrix(renderState->dl++, G_MTX_MODELVIEW);
 }
 
+LookAt gLookAt = gdSPDefLookAt(127, 0, 0, 0, 127, 0);
+
 void sceneRender(struct Scene* scene, struct RenderState* renderState, struct GraphicsTask* task) {
     gSPSetLights1(renderState->dl++, gSceneLights);
+    LookAt* lookAt = renderStateRequestLookAt(renderState);
+    *lookAt = gLookAt;
+    gSPLookAt(renderState->dl++, lookAt);
     
     struct RenderProps renderProperties;
 
@@ -170,8 +201,6 @@ void sceneRender(struct Scene* scene, struct RenderState* renderState, struct Gr
     renderProperties.camera = scene->camera;
 
     gDPSetRenderMode(renderState->dl++, G_RM_ZB_OPA_SURF, G_RM_ZB_OPA_SURF2);
-
-    dynamicSceneRenderTouchingPortal(&scene->camera.transform, &renderProperties.cullingInfo, renderState);
 
     sceneRenderWithProperties(scene, &renderProperties, renderState);
 
@@ -244,6 +273,14 @@ void sceneUpdateListeners(struct Scene* scene) {
     }
 }
 
+struct Transform gRelativeElevatorTransform = {
+    {0.0f, 0.0f, 0.0f},
+    {0.5f, -0.5f, -0.5f, 0.5f},
+    {1.0f, 1.0f, 1.0f},
+};
+
+#define FREE_CAM_VELOCITY   2.0f
+
 void sceneUpdate(struct Scene* scene) {
     OSTime frameStart = osGetTime();
     scene->lastFrameTime = frameStart - scene->lastFrameStart;
@@ -258,20 +295,67 @@ void sceneUpdate(struct Scene* scene) {
         buttonUpdate(&scene->buttons[i]);
     }
 
+    signalsEvaluateSignals(gCurrentLevel->signalOperators, gCurrentLevel->signalOperatorCount);
+
     for (int i = 0; i < scene->doorCount; ++i) {
         doorUpdate(&scene->doors[i]);
     }
 
+    int decorWriteIndex = 0;
+
     for (int i = 0; i < scene->decorCount; ++i) {
-        decorObjectUpdate(scene->decor[i]);
+        if (!decorObjectUpdate(scene->decor[i])) {
+            decorObjectDelete(scene->decor[i]);
+            continue;;
+        }
+
+        if (decorWriteIndex != i) {
+            scene->decor[decorWriteIndex] = scene->decor[i];
+        }
+
+        ++decorWriteIndex;
     }
+
+    scene->decorCount = decorWriteIndex;
 
     for (int i = 0; i < scene->fizzlerCount; ++i) {
         fizzlerUpdate(&scene->fizzlers[i]);
     }
     
     for (int i = 0; i < scene->elevatorCount; ++i) {
-        elevatorUpdate(&scene->elevators[i], &scene->player);
+        int teleportTo = elevatorUpdate(&scene->elevators[i], &scene->player);
+
+        if (teleportTo != -1) {
+            if (teleportTo >= scene->elevatorCount) {
+                struct Transform exitInverse;
+                struct Transform fullExitTransform;
+
+                transformConcat(&scene->elevators[i].rigidBody.transform, &gRelativeElevatorTransform, &fullExitTransform);
+
+                transformInvert(&fullExitTransform, &exitInverse);
+                struct Transform relativeExit;
+                struct Vector3 relativeVelocity;
+
+                transformConcat(&exitInverse, &scene->player.lookTransform, &relativeExit);
+                quatMultVector(&exitInverse.rotation, &scene->player.body.velocity, &relativeVelocity);
+                levelQueueLoad(NEXT_LEVEL, &relativeExit, &relativeVelocity);
+            } else {
+                rigidBodyTeleport(
+                    &scene->player.body,
+                    &scene->elevators[i].rigidBody.transform,
+                    &scene->elevators[teleportTo].rigidBody.transform,
+                    scene->elevators[teleportTo].roomIndex
+                );
+            }
+        }
+    }
+
+    for (int i = 0; i < scene->pedestalCount; ++i) {
+        pedestalUpdate(&scene->pedestals[i]);
+    }
+
+    for (int i = 0; i < scene->boxDropperCount; ++i) {
+        boxDropperUpdate(&scene->boxDroppers[i]);
     }
     
     collisionSceneUpdateDynamics();
@@ -281,6 +365,49 @@ void sceneUpdate(struct Scene* scene) {
 
     scene->cpuTime = osGetTime() - frameStart;
     scene->lastFrameStart = frameStart;
+
+    OSContPad* freecam = controllersGetControllerData(1);
+
+
+    struct Vector3 lookDir;
+    struct Vector3 rightDir;
+
+    playerGetMoveBasis(&scene->camera.transform, &lookDir, &rightDir);
+
+    if (freecam->stick_y) {
+        if (controllerGetButton(1, Z_TRIG)) {
+            vector3AddScaled(
+                &scene->freeCameraOffset, 
+                &lookDir, 
+                -freecam->stick_y * (FREE_CAM_VELOCITY * FIXED_DELTA_TIME / 80.0f), 
+                &scene->freeCameraOffset
+            );
+        } else {
+            scene->freeCameraOffset.y += freecam->stick_y * (FREE_CAM_VELOCITY * FIXED_DELTA_TIME / 80.0f);
+        }
+    }
+
+    if (freecam->stick_x) {
+        vector3AddScaled(
+            &scene->freeCameraOffset, 
+            &rightDir, 
+            freecam->stick_x * (FREE_CAM_VELOCITY * FIXED_DELTA_TIME / 80.0f), 
+            &scene->freeCameraOffset
+        );
+    }
+
+    if (controllerGetButtonDown(1, START_BUTTON)) {
+        scene->freeCameraOffset = gZeroVec;
+    }
+
+    vector3Add(&scene->camera.transform.position, &scene->freeCameraOffset, &scene->camera.transform.position);
+
+    if (controllerGetButtonDown(1, L_TRIG)) {
+        struct Transform identityTransform;
+        transformInitIdentity(&identityTransform);
+        identityTransform.position.y = 1.0f;
+        levelQueueLoad(NEXT_LEVEL, &identityTransform, &gZeroVec);
+    }
 }
 
 int sceneOpenPortal(struct Scene* scene, struct Transform* at, int portalIndex, int quadIndex, int roomIndex) {
@@ -341,7 +468,15 @@ int sceneFirePortal(struct Scene* scene, struct Ray* ray, struct Vector3* player
     if (fabsf(hit.normal.y) < 0.8) {
         quatLook(&hitDirection, &gUp, &portalLocation.rotation);
     } else {
-        quatLook(&hitDirection, playerUp, &portalLocation.rotation);
+        struct Vector3 upDir;
+
+        if (ray->dir.y > 0.0f) {
+            vector3Negate(playerUp, &upDir);
+        } else {
+            upDir = *playerUp;
+        }
+
+        quatLook(&hitDirection, &upDir, &portalLocation.rotation);
     }
 
     return sceneOpenPortal(scene, &portalLocation, portalIndex, quadIndex, hit.roomIndex);

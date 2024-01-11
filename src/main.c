@@ -14,6 +14,8 @@
 #include "audio/soundplayer.h"
 #include "audio/audio.h"
 #include "scene/portal_surface.h"
+#include "sk64/skelatool_defs.h"
+#include "levels/cutscene_runner.h"
 
 #include "levels/levels.h"
 
@@ -91,6 +93,8 @@ extern OSMesgQueue dmaMessageQ;
 
 extern char _heapStart[];
 
+extern char _animation_segmentSegmentRomStart[];
+
 static void gameProc(void* arg) {
     u8 schedulerMode = OS_VI_NTSC_LPF1;
 
@@ -149,11 +153,15 @@ static void gameProc(void* arg) {
 
     dynamicSceneInit();
     contactSolverInit(&gContactSolver);
+    portalSurfaceCleanupQueueInit();
     levelLoad(0);
+    cutsceneRunnerReset();
     controllersInit();
     initAudio();
     soundPlayerInit();
     sceneInit(&gScene);
+    skInitDataPool(gPiHandle);
+    skSetSegmentLocation(CHARACTER_ANIMATION_SEGMENT, (unsigned)_animation_segmentSegmentRomStart);
 
     while (1) {
         OSScMsg *msg = NULL;
@@ -167,6 +175,22 @@ static void gameProc(void* arg) {
                     break;
                 }
 
+                if (levelGetQueued() != NO_QUEUED_LEVEL) {
+                    if (pendingGFX == 0) {
+                        dynamicSceneInit();
+                        contactSolverInit(&gContactSolver);
+                        portalSurfaceRevert(1);
+                        portalSurfaceRevert(0);
+                        portalSurfaceCleanupQueueInit();
+                        heapInit(_heapStart, memoryEnd);
+                        levelLoad(levelGetQueued());
+                        cutsceneRunnerReset();
+                        sceneInit(&gScene);
+                    }
+
+                    break;
+                }
+
                 if (pendingGFX < 2 && drawingEnabled) {
                     graphicsCreateTask(&gGraphicsTasks[drawBufferIndex], (GraphicsCallback)sceneRender, &gScene);
                     drawBufferIndex = drawBufferIndex ^ 1;
@@ -174,6 +198,7 @@ static void gameProc(void* arg) {
                 }
 
                 controllersTriggerRead();
+                skReadMessages();
                 if (inputIgnore) {
                     --inputIgnore;
                 } else {

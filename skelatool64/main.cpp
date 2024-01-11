@@ -23,6 +23,9 @@
 #include "src/definition_generator/LevelGenerator.h"
 #include "src/definition_generator/TriggerGenerator.h"
 #include "src/materials/MaterialState.h"
+#include "src/materials/MaterialTranslator.h"
+#include "src/StringUtils.h"
+#include "src/lua_generator/LuaGenerator.h"
 
 void handler(int sig) {
   void *array[10];
@@ -42,6 +45,8 @@ bool parseMaterials(const std::string& filename, DisplayListSettings& output) {
     std::fstream file(filename, std::ios::in);
 
     struct ParseResult parseResult(DirectoryName(filename));
+    parseResult.mForcePallete = output.mForcePallete;
+    parseResult.mTargetCIBuffer = output.mTargetCIBuffer;
     parseMaterialFile(file, parseResult);
     output.mMaterials.insert(parseResult.mMaterialFile.mMaterials.begin(), parseResult.mMaterialFile.mMaterials.end());
 
@@ -105,12 +110,25 @@ int main(int argc, char *argv[]) {
     settings.mPrefix = args.mPrefix;
     settings.mExportAnimation = args.mExportAnimation;
     settings.mExportGeometry = args.mExportGeometry;
+    settings.mBonesAsVertexGroups = args.mBonesAsVertexGroups;
+    settings.mForcePallete = args.mForcePallete;
+    settings.mTargetCIBuffer = args.mTargetCIBuffer;
 
     bool hasError = false;
 
     for (auto materialFile = args.mMaterialFiles.begin(); materialFile != args.mMaterialFiles.end(); ++materialFile) {
-        if (!parseMaterials(*materialFile, settings)) {
-            hasError = true;
+        if (EndsWith(*materialFile, ".yaml") || EndsWith(*materialFile, ".yml") || EndsWith(*materialFile, ".json")) {
+            if (!parseMaterials(*materialFile, settings)) {
+                hasError = true;
+            }
+        } else {
+            aiScene* materialScene = loadScene(*materialFile, false, settings.mVertexCacheSize, 0);
+
+            if (!materialScene) {
+                hasError = true;
+            }
+
+            fillMissingMaterials(gTextureCache, materialScene, settings);
         }
     }
 
@@ -141,6 +159,8 @@ int main(int argc, char *argv[]) {
         if (!scene) {
             return 1;
         }
+
+        fillMissingMaterials(gTextureCache, scene, settings);
     }
 
     std::cout << "Saving to "  << args.mOutputFile << std::endl;
@@ -207,6 +227,15 @@ int main(int argc, char *argv[]) {
             std::cout << "Generating collider definitions" << std::endl;
             auto collisionOutput = generateCollision(scene, fileDef, settings, NULL, nodesByGroup);
             generateMeshCollider(fileDef, *collisionOutput);
+            break;
+        }
+        case FileOutputType::Script:
+        {
+            NodeGroups nodesByGroup(scene);
+            for (auto script : args.mScriptFiles) {
+                std::cout << "Generating definitions from script " << script << std::endl;
+                generateFromLuaScript(script, scene, fileDef, nodesByGroup, settings);
+            }
             break;
         }
     }

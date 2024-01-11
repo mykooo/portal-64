@@ -13,6 +13,7 @@
 #define COLLISION_LAYERS_BLOCK_PORTAL       (1 << 5)
 
 #define COLLISION_OBJECT_HAS_CONTACTS       (1 << 0)
+#define COLLISION_OBJECT_PLAYER_STANDING    (1 << 1)
 
 typedef void (*TriggerCallback)(void* data, struct CollisionObject* objectEnteringTrigger);
 
@@ -24,6 +25,7 @@ struct CollisionObject {
     short flags;
     void* data;
     TriggerCallback trigger;
+    u32 manifoldIds;
 };
 
 struct SweptCollisionObject {

@@ -173,7 +173,7 @@ Vp* renderPropsBuildViewport(struct RenderProps* props, struct RenderState* rend
     return viewport;
 }
 
-void renderPropsNext(struct RenderProps* current, struct RenderProps* next, struct Transform* fromPortal, struct Transform* toPortal, struct RenderState* renderState) {
+int renderPropsNext(struct RenderProps* current, struct RenderProps* next, struct Transform* fromPortal, struct Transform* toPortal, struct RenderState* renderState) {
     struct Transform otherInverse;
     transformInvert(fromPortal, &otherInverse);
     struct Transform portalCombined;
@@ -200,8 +200,9 @@ void renderPropsNext(struct RenderProps* current, struct RenderProps* next, stru
     }
 
     // render any objects halfway through portals
-    cameraSetupMatrices(&next->camera, renderState, next->aspectRatio, &next->perspectiveCorrect, current->viewport, NULL);
-    dynamicSceneRenderTouchingPortal(&next->camera.transform, &current->cullingInfo, renderState);
+    if (!cameraSetupMatrices(&next->camera, renderState, next->aspectRatio, &next->perspectiveCorrect, current->viewport, NULL)) {
+        return 0;
+    }
 
     next->currentDepth = current->currentDepth - 1;
     Vp* viewport = renderPropsBuildViewport(next, renderState);
@@ -240,6 +241,8 @@ void renderPropsNext(struct RenderProps* current, struct RenderProps* next, stru
     gSPViewport(renderState->dl++, viewport);
     gDPSetScissor(renderState->dl++, G_SC_NON_INTERLACE, next->minX, next->minY, next->maxX, next->maxY);
 #endif
+
+    return 1;
 }
 
 void portalInit(struct Portal* portal, enum PortalFlags flags) {
@@ -337,6 +340,19 @@ void portalRenderScreenCover(struct Vector2s16* points, int pointCount, struct R
     gDPSetRenderMode(renderState->dl++, G_RM_ZB_OPA_SURF, G_RM_ZB_OPA_SURF2);
 }
 
+void portalRenderCover(struct Portal* portal, float portalTransform[4][4], struct RenderState* renderState) {
+    Mtx* matrix = renderStateRequestMatrices(renderState, 1);
+
+    guMtxF2L(portalTransform, matrix);
+    gSPMatrix(renderState->dl++, matrix, G_MTX_MODELVIEW | G_MTX_PUSH | G_MTX_MUL);
+    if (portal->flags & PortalFlagsOddParity) {
+        gSPDisplayList(renderState->dl++, portal_portal_blue_filled_model_gfx);
+    } else {
+        gSPDisplayList(renderState->dl++, portal_portal_orange_filled_model_gfx);
+    }
+    gSPPopMatrix(renderState->dl++, G_MTX_MODELVIEW);
+}
+
 void portalRender(struct Portal* portal, struct Portal* otherPortal, struct RenderProps* props, SceneRenderCallback sceneRenderer, void* data, struct RenderState* renderState) {
     struct Vector3 forward = gForward;
     if (!(portal->flags & PortalFlagsOddParity)) {
@@ -370,16 +386,7 @@ void portalRender(struct Portal* portal, struct Portal* otherPortal, struct Rend
     transformToMatrix(&finalTransform, portalTransform, SCENE_SCALE);
 
     if (props->currentDepth == 0 || !otherPortal) {
-        Mtx* matrix = renderStateRequestMatrices(renderState, 1);
-
-        guMtxF2L(portalTransform, matrix);
-        gSPMatrix(renderState->dl++, matrix, G_MTX_MODELVIEW | G_MTX_PUSH | G_MTX_MUL);
-        if (portal->flags & PortalFlagsOddParity) {
-            gSPDisplayList(renderState->dl++, portal_portal_blue_filled_model_gfx);
-        } else {
-            gSPDisplayList(renderState->dl++, portal_portal_orange_filled_model_gfx);
-        }
-        gSPPopMatrix(renderState->dl++, G_MTX_MODELVIEW);
+        portalRenderCover(portal, portalTransform, renderState);
         return;
     }
 
@@ -408,7 +415,11 @@ void portalRender(struct Portal* portal, struct Portal* otherPortal, struct Rend
     }
 
     if (nextProps.minX < nextProps.maxX && nextProps.minY < nextProps.maxY) {
-        renderPropsNext(props, &nextProps, &portal->transform, &otherPortal->transform, renderState);
+        if (!renderPropsNext(props, &nextProps, &portal->transform, &otherPortal->transform, renderState)) {
+            portalRenderCover(portal, portalTransform, renderState);
+            return;
+        }
+
         sceneRenderer(data, &nextProps, renderState);
 
         // revert to previous state
@@ -537,4 +548,45 @@ void portalCheckForHoles(struct Portal* portals) {
         portalSurfaceCutNewHole(&portals[1], 1);
     }
     
+}
+
+int minkowsiSumAgainstPortal(void* data, struct Vector3* direction, struct Vector3* output) {
+    struct Transform* transform = (struct Transform*)data;
+    struct Vector3 localDir;
+    struct Quaternion inverseRotation;
+
+    quatConjugate(&transform->rotation, &inverseRotation);
+    quatMultVector(&inverseRotation, direction, &localDir);
+
+    float maxDot = vector3Dot(&gPortalOutline[0], &localDir);
+    int maxDotIndex = 0;
+
+    for (int i = 0; i < 9; ++i) {
+        if (maxDot < 0.0f) {
+            maxDotIndex = (maxDotIndex + 4) & 0x7;
+            maxDot = vector3Dot(&gPortalOutline[maxDotIndex], &localDir);
+        } else {
+            int prevIndex = (i - 1) & 0x7;
+            int nextIndex = (i + 1) & 0x7;
+
+            float prevDot = vector3Dot(&gPortalOutline[prevIndex], &localDir);
+            float nextDot = vector3Dot(&gPortalOutline[nextIndex], &localDir);
+
+            if (prevDot > maxDot) {
+                maxDotIndex = prevIndex;
+                maxDot = prevDot;
+            } else if (nextDot > maxDot) {
+                maxDotIndex = nextIndex;
+                maxDot = nextDot;
+            } else {
+                break;
+            }
+        }
+    }
+
+    quatMultVector(&transform->rotation, &gPortalOutline[maxDotIndex], output);
+    vector3Scale(output, output, 1.2f / SCENE_SCALE);
+    vector3Add(output, &transform->position, output);
+
+    return 1 << maxDotIndex;
 }

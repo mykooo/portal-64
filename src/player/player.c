@@ -46,12 +46,13 @@ struct ColliderTypeData gPlayerColliderData = {
     &gCollisionCylinderCallbacks,
 };
 
-void playerInit(struct Player* player, struct Location* startLocation) {
+void playerInit(struct Player* player, struct Location* startLocation, struct Vector3* velocity) {
     collisionObjectInit(&player->collisionObject, &gPlayerColliderData, &player->body, 1.0f, PLAYER_COLLISION_LAYERS);
-    rigidBodyMarkKinematic(&player->body);
-    player->body.flags |= RigidBodyGenerateContacts;
+    // rigidBodyMarkKinematic(&player->body);
+    player->body.flags |= RigidBodyIsKinematic | RigidBodyIsPlayer;
     collisionSceneAddDynamicObject(&player->collisionObject);
 
+    player->body.velocity = *velocity;
     player->grabbingThroughPortal = PLAYER_GRABBING_THROUGH_NOTHING;
     player->grabbing = NULL;
     player->pitchVelocity = 0.0f;
@@ -65,21 +66,20 @@ void playerInit(struct Player* player, struct Location* startLocation) {
         transformInitIdentity(&player->lookTransform);
         player->body.currentRoom = 0;
     }
-    player->lookTransform.position.y += PLAYER_HEAD_HEIGHT;
     player->body.transform = player->lookTransform;
 
     collisionObjectUpdateBB(&player->collisionObject);
 }
 
-#define PLAYER_SPEED    (3.0f)
-#define PLAYER_ACCEL    (30.0f)
-#define PLAYER_STOP_ACCEL    (80.0f)
+#define PLAYER_SPEED    (150.0f / 64.0f)
+#define PLAYER_ACCEL    (5.875f)
+#define PLAYER_STOP_ACCEL    (5.875f)
 
 #define ROTATE_RATE     (M_PI * 2.0f)
 #define ROTATE_RATE_DELTA     (M_PI * 0.125f)
 #define ROTATE_RATE_STOP_DELTA (M_PI * 0.25f)
 
-#define JUMP_IMPULSE   3.2f
+#define JUMP_IMPULSE   2.7f
 
 void playerHandleCollision(struct Player* player) {
     struct ContactManifold* contact = contactSolverNextManifold(&gContactSolver, &player->collisionObject, NULL);
@@ -99,12 +99,13 @@ void playerHandleCollision(struct Player* player) {
                 (contact->shapeA == &player->collisionObject ? offset : -offset) * 0.95f, 
                 &player->body.transform.position
             );
+        }
 
-            float relativeVelocity = vector3Dot(&contact->normal, &player->body.velocity);
 
-            if ((contact->shapeA == &player->collisionObject) == (relativeVelocity > 0.0f)) {
-                vector3ProjectPlane(&player->body.velocity, &contact->normal, &player->body.velocity);
-            }
+        float relativeVelocity = vector3Dot(&contact->normal, &player->body.velocity);
+
+        if ((contact->shapeA == &player->collisionObject) == (relativeVelocity > 0.0f)) {
+            vector3ProjectPlane(&player->body.velocity, &contact->normal, &player->body.velocity);
         }
 
         contact = contactSolverNextManifold(&gContactSolver, &player->collisionObject, contact);
@@ -120,9 +121,9 @@ void playerApplyPortalGrab(struct Player* player, int portalIndex) {
 }
 
 void playerUpdateGrabbedObject(struct Player* player) {
-    if (controllerGetButtonDown(0, B_BUTTON) || controllerGetButtonDown(0, U_JPAD)) {
+    if (controllerGetButtonDown(0, B_BUTTON) || controllerGetButtonDown(1, U_JPAD)) {
         if (player->grabbing) {
-            if (controllerGetButtonDown(0, U_JPAD)) {
+            if (controllerGetButtonDown(1, U_JPAD)) {
                 struct Vector3 forward;
                 quatMultVector(&player->lookTransform.rotation, &gForward, &forward);
                 vector3AddScaled(&player->grabbing->body->velocity, &forward, -50.0f, &player->grabbing->body->velocity);
@@ -220,30 +221,30 @@ float playerCleanupStickInput(s8 input) {
     return ((float)input + (input > 0 ? -DEADZONE_SIZE : DEADZONE_SIZE)) * (1.0f / (MAX_JOYSTICK_RANGE - DEADZONE_SIZE));
 }
 
+void playerGetMoveBasis(struct Transform* transform, struct Vector3* forward, struct Vector3* right) {
+    quatMultVector(&transform->rotation, &gForward, forward);
+    quatMultVector(&transform->rotation, &gRight, right);
+
+    if (forward->y > 0.7f) {
+        quatMultVector(&transform->rotation, &gUp, forward);
+        vector3Negate(forward, forward);
+    } else if (forward->y < -0.7f) {
+        quatMultVector(&transform->rotation, &gUp, forward);
+    }
+
+    forward->y = 0.0f;
+    right->y = 0.0f;
+
+    vector3Normalize(forward, forward);
+    vector3Normalize(right, right);
+}
+
 void playerUpdate(struct Player* player, struct Transform* cameraTransform) {
     struct Vector3 forward;
     struct Vector3 right;
 
     int doorwayMask = worldCheckDoorwaySides(&gCurrentLevel->world, &player->lookTransform.position, player->body.currentRoom);
-
-    struct Transform* transform = &player->lookTransform;
-
-    quatMultVector(&transform->rotation, &gForward, &forward);
-    quatMultVector(&transform->rotation, &gRight, &right);
-
-    if (forward.y > 0.7f) {
-        quatMultVector(&transform->rotation, &gUp, &forward);
-        vector3Negate(&forward, &forward);
-    } else if (forward.y < -0.7f) {
-        quatMultVector(&transform->rotation, &gUp, &forward);
-    }
-
-    forward.y = 0.0f;
-    right.y = 0.0f;
-
-    vector3Normalize(&gForward, &gForward);
-    vector3Normalize(&gRight, &gRight);
-
+    playerGetMoveBasis(&player->lookTransform, &forward, &right);
 
     if ((player->flags & PlayerFlagsGrounded) && controllerGetButtonDown(0, A_BUTTON)) {
         player->body.velocity.y = JUMP_IMPULSE;
@@ -275,63 +276,42 @@ void playerUpdate(struct Player* player, struct Transform* cameraTransform) {
 
     player->body.velocity.y += GRAVITY_CONSTANT * FIXED_DELTA_TIME;
 
+    struct Vector3 prevPos = player->body.transform.position;
+
     vector3AddScaled(&player->body.transform.position, &player->body.velocity, FIXED_DELTA_TIME, &player->body.transform.position);
+
+    struct Box3D sweptBB = player->collisionObject.boundingBox;
+    collisionObjectUpdateBB(&player->collisionObject);
+    box3DUnion(&sweptBB, &player->collisionObject.boundingBox, &sweptBB);
+
+    collisionObjectCollideMixed(&player->collisionObject, &prevPos, &sweptBB, &gCollisionScene, &gContactSolver);
 
     struct RaycastHit hit;
     struct Ray ray;
     ray.origin = player->body.transform.position;
     vector3Scale(&gUp, &ray.dir, -1.0f);
     if (collisionSceneRaycast(&gCollisionScene, player->body.currentRoom, &ray, COLLISION_LAYERS_TANGIBLE, PLAYER_HEAD_HEIGHT + 0.2f, 1, &hit)) {
-        struct ContactManifold* collisionManifold = contactSolverGetContactManifold(&gContactSolver, &player->collisionObject, hit.object);
+        float penetration = hit.distance - PLAYER_HEAD_HEIGHT;
 
-        struct EpaResult newContact;
-
-        newContact.id = 0xFFFF;
-
-        struct Vector3* playerContact;
-        struct Vector3* otherContact;
-        
-        if (collisionManifold->shapeA == &player->collisionObject) {
-            playerContact = &newContact.contactA;
-            otherContact = &newContact.contactB;
-            vector3Negate(&hit.normal, &newContact.normal);
-        } else {
-            playerContact = &newContact.contactB;
-            otherContact = &newContact.contactA;
-            newContact.normal = hit.normal;
-        }
-
-        playerContact->x = 0.0f; playerContact->y = -PLAYER_HEAD_HEIGHT; playerContact->z = 0.0f;
-        *otherContact = hit.at;
-
-        newContact.penetration = hit.distance - PLAYER_HEAD_HEIGHT;
-
-        if (hit.object && hit.object->body) {
-            transformPointInverseNoScale(&hit.object->body->transform, otherContact, otherContact);
-        }
-
-        collisionManifold->friction = MAX(player->collisionObject.collider->friction, hit.object->collider->friction);
-        collisionManifold->restitution = MIN(player->collisionObject.collider->bounce, hit.object->collider->bounce);
-
-        contactInsert(collisionManifold, &newContact);
-        player->flags |= PlayerFlagsGrounded;
-    } else {
-        player->flags &= ~PlayerFlagsGrounded;
-
-        struct ContactManifold* manifold = contactSolverNextManifold(&gContactSolver, &player->collisionObject, NULL);
-
-        while (manifold) {
-            for (int contact = 0; contact < manifold->contactCount; ++contact) {
-                if (manifold->contacts[contact].id == 0xFFFF) {
-                    manifold->contactCount = 0;
-                    break;
-                }
+        if (penetration < 0.0f) {
+            vector3AddScaled(&player->body.transform.position, &gUp, -penetration, &player->body.transform.position);
+            if (player->body.velocity.y < 0.0f) {
+                player->body.velocity.y = 0.0f;
             }
-
-            manifold = contactSolverNextManifold(&gContactSolver, &player->collisionObject, manifold);
         }
+
+        hit.object->flags |= COLLISION_OBJECT_PLAYER_STANDING;
+        player->flags |= PlayerFlagsGrounded;
+    }
+    
+    struct ContactManifold* manifold = contactSolverNextManifold(&gContactSolver, &player->collisionObject, NULL);
+
+    while (manifold) {
+        contactSolverCleanupManifold(manifold);
+        manifold = contactSolverNextManifold(&gContactSolver, &player->collisionObject, manifold);
     }
 
+    collisionObjectUpdateBB(&player->collisionObject);
     playerHandleCollision(player);
 
     player->body.transform.rotation = player->lookTransform.rotation;    

@@ -26,6 +26,8 @@ enum CutsceneStepType {
     CutsceneStepTypeNoop,
     CutsceneStepTypePlaySound,
     CutsceneStepTypeStartSound,
+    CutsceneStepTypeQueueSound,
+    CutsceneStepTypeWaitForChannel,
     CutsceneStepTypeDelay,
     CutsceneStepTypeOpenPortal,
     CutsceneStepTypeSetSignal,
@@ -36,7 +38,14 @@ enum CutsceneStepType {
     CutsceneStepTypeStartCutscene,
     CutsceneStepTypeStopCutscene,
     CutsceneStepTypeWaitForCutscene,
+    CutsceneStepTypeHidePedestal,
+    CutsceneStepTypePointPedestal,
 };
+
+#define CH_NONE    0xFF
+#define CH_GLADOS  0
+
+#define CH_COUNT   1
 
 struct CutsceneStep {
     enum CutsceneStepType type;
@@ -47,6 +56,14 @@ struct CutsceneStep {
             u8 volume;
             u8 pitch;
         } playSound;
+        struct {
+            u16 soundId;
+            u8 channel;
+            u8 volume;
+        } queueSound;
+        struct {
+            u8 channel;
+        } waitForChannel;
         struct {
             u16 locationIndex;
             u16 portalIndex;
@@ -65,7 +82,8 @@ struct CutsceneStep {
         } teleportPlayer;
         struct {
             u16 fromLocation;
-            u16 levelIndex;
+            // -1 signals loading the next level
+            s16 levelIndex;
         } loadLevel;
         struct {
             s16 relativeInstructionIndex;
@@ -73,6 +91,9 @@ struct CutsceneStep {
         struct {
             u16 cutsceneIndex;
         } cutscene;
+        struct {
+            u16 atLocation;
+        } pointPedestal;
         int noop;
     };
 };
@@ -125,8 +146,25 @@ struct ElevatorDefinition {
     struct Vector3 position;
     struct Quaternion rotation;
     short roomIndex;
+    short targetElevator;
+};
+
+struct PedestalDefinition {
+    struct Vector3 position;
+    short roomIndex;
+};
+
+struct SignageDefinition {
+    struct Vector3 position;
+    struct Quaternion rotation;
+    short roomIndex;
+    short testChamberNumber;
+};
+
+struct BoxDropperDefinition {
+    struct Vector3 position;
+    short roomIndex;
     short signalIndex;
-    short isExit;
 };
 
 struct LevelDefinition {
@@ -148,6 +186,9 @@ struct LevelDefinition {
     struct DecorDefinition* decor;
     struct FizzlerDefinition* fizzlers;
     struct ElevatorDefinition* elevators;
+    struct PedestalDefinition* pedestals;
+    struct SignageDefinition* signage;
+    struct BoxDropperDefinition* boxDroppers;
     short collisionQuadCount;
     short staticContentCount;
     short portalSurfaceCount;
@@ -160,6 +201,9 @@ struct LevelDefinition {
     short decorCount;
     short fizzlerCount;
     short elevatorCount;
+    short pedestalCount;
+    short signageCount;
+    short boxDropperCount;
     short startLocation;
 };
 

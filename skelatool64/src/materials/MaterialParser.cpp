@@ -14,8 +14,6 @@
 #include "./RenderMode.h"
 #include "CombineMode.h"
 
-TextureCache gTextureCache;
-
 ParseError::ParseError(const std::string& message) :
     mMessage(message) {
     
@@ -110,6 +108,20 @@ bool parseMaterialColor(const YAML::Node& node, PixelRGBAu8& color, ParseResult&
     color.g = parseInteger(node["g"], output, 0, 255);
     color.b = parseInteger(node["b"], output, 0, 255);
     color.a = parseOptionalInteger(node["a"], output, 0, 255, 255);
+
+    auto bypassNode = node["bypassEffects"];
+    
+    bool bypass = bypassNode.IsDefined() && bypassNode.as<bool>();
+
+    if (!bypass && output.mForcePallete.length() && output.mTargetCIBuffer) {
+        std::shared_ptr<PalleteDefinition> pallete = gTextureCache.GetPallete(output.mForcePallete);
+
+        PixelIu8 colorindex = pallete->FindIndex(color);
+
+        color.r = colorindex.i;
+        color.g = colorindex.i;
+        color.b = colorindex.i;
+    }
 
     return true;
 }
@@ -229,6 +241,7 @@ std::shared_ptr<TextureDefinition> parseTextureDefinition(const YAML::Node& node
     }
 
     std::string filename;
+    std::string palleteFilename = output.mForcePallete;
 
     bool hasFormat = false;
     G_IM_FMT requestedFormat;
@@ -286,6 +299,16 @@ std::shared_ptr<TextureDefinition> parseTextureDefinition(const YAML::Node& node
                 effects = (TextureDefinitionEffect)((int)effects | (int)TextureDefinitionEffect::SelectB);
             }
         }
+
+        auto usePallete = node["usePallete"];
+
+        if (usePallete.IsDefined()) {
+            if (usePallete.IsScalar()) {
+                palleteFilename = usePallete.as<std::string>();
+            } else {
+                output.mErrors.push_back(ParseError(formatError(std::string("usePallete should be a file path to a pallete") + filename, usePallete.Mark())));
+            }
+        }
     } else {
         output.mErrors.push_back(ParseError(formatError(std::string("Tile should be a file name or object") + filename, node.Mark())));
         return NULL;
@@ -324,7 +347,7 @@ std::shared_ptr<TextureDefinition> parseTextureDefinition(const YAML::Node& node
         return NULL;
     }
 
-    return gTextureCache.GetTexture(filename, format, size, effects);
+    return gTextureCache.GetTexture(filename, format, size, effects, palleteFilename);
 }
 
 int parseRenderModeFlags(const YAML::Node& node, ParseResult& output) {
@@ -755,6 +778,10 @@ std::shared_ptr<Material> parseMaterial(const std::string& name, const YAML::Nod
     material->mState.useBlendColor = parseMaterialColor(node["gDPSetBlendColor"], material->mState.blendColor, output) || material->mState.useBlendColor;
 
     material->mNormalSource = parseMaterialNormalSource(node["normalSource"]);
+
+    auto excludeFromOutput = node["excludeFromOutput"];
+
+    material->mExcludeFromOutut = excludeFromOutput.IsDefined() && excludeFromOutput.as<bool>();
 
     auto properties = node["properties"];
 

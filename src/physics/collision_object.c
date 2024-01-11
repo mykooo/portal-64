@@ -14,14 +14,15 @@ void collisionObjectInit(struct CollisionObject* object, struct ColliderTypeData
     object->collisionLayers = collisionLayers;
     object->data = 0;
     object->trigger = 0;
+    object->manifoldIds = 0;
 }
 
 int collisionObjectIsActive(struct CollisionObject* object) {
-    return object->body && (object->body->flags & (RigidBodyIsKinematic | RigidBodyIsSleeping)) == 0;
+    return object->body && ((object->body->flags & (RigidBodyIsKinematic | RigidBodyIsSleeping)) == 0);
 }
 
 int collisionObjectShouldGenerateConctacts(struct CollisionObject* object) {
-    return collisionObjectIsActive(object) || (object->body->flags & RigidBodyGenerateContacts) != 0;
+    return collisionObjectIsActive(object) || (object->body->flags & RigidBodyIsPlayer) != 0;
 }
 
 void collisionObjectCollideWithQuad(struct CollisionObject* object, struct CollisionObject* quadObject, struct ContactSolver* contactSolver) {
@@ -66,8 +67,10 @@ void collisionObjectCollideWithQuad(struct CollisionObject* object, struct Colli
         &result
     );
 
-    if (collisionSceneIsTouchingPortal(&result.contactA, &result.normal)) {
-        object->body->flags |= RigidBodyIsTouchingPortal;
+    int touchingPortals = collisionSceneIsTouchingPortal(&result.contactA, &result.normal);
+
+    if (touchingPortals) {
+        object->body->flags |= touchingPortals;
         return;
     }
 
@@ -123,19 +126,24 @@ void collisionObjectCollideWithQuadSwept(struct CollisionObject* object, struct 
     }
 
     struct EpaResult result;
+    struct Vector3 objectEnd = object->body->transform.position;
+
     if (!epaSolveSwept(
         &simplex, 
         quad, minkowsiSumAgainstQuad, 
         &sweptObject, minkowsiSumAgainstSweptObject,
         objectPrevPos,
-        &object->body->transform.position,
+        &objectEnd,
         &result
     )) {
+        collisionObjectCollideWithQuad(object, quadObject, contactSolver);
         return;
     }
 
-    if (collisionSceneIsTouchingPortal(&result.contactA, &result.normal)) {
-        object->body->flags |= RigidBodyIsTouchingPortal;
+    int touchingPortals = collisionSceneIsTouchingPortal(&result.contactA, &result.normal);
+
+    if (touchingPortals) {
+        object->body->flags |= touchingPortals;
         return;
     }
 
@@ -145,10 +153,10 @@ void collisionObjectCollideWithQuadSwept(struct CollisionObject* object, struct 
         return;
     }
 
+    object->body->transform.position = objectEnd;
+
     contact->friction = MAX(object->collider->friction, quadObject->collider->friction);
     contact->restitution = MIN(object->collider->bounce, quadObject->collider->bounce);
-
-    object->body->velocity = gZeroVec;
 
     transformPointInverseNoScale(&object->body->transform, &result.contactB, &result.contactB);
     contactInsert(contact, &result);
@@ -269,10 +277,18 @@ int minkowsiSumAgainstQuad(void* data, struct Vector3* direction, struct Vector3
 int minkowsiSumAgainstSweptObject(void* data, struct Vector3* direction, struct Vector3* output) {
     struct SweptCollisionObject* sweptObject = (struct SweptCollisionObject*)data;
 
-    int result = sweptObject->object->collider->callbacks->minkowsiSum(sweptObject->object->collider->data, &sweptObject->object->body->rotationBasis, direction, output);
+    struct ColliderTypeData* collider = sweptObject->object->collider;
+    struct RigidBody* body = sweptObject->object->body;
 
-    if (vector3Dot(&sweptObject->object->body->transform.position, direction) > vector3Dot(sweptObject->prevPos, direction)) {
-        vector3Add(output, &sweptObject->object->body->transform.position, output);
+    int result = collider->callbacks->minkowsiSum(
+        collider->data, 
+        &body->rotationBasis, 
+        direction, 
+        output
+    );
+
+    if (vector3Dot(&body->transform.position, direction) > vector3Dot(sweptObject->prevPos, direction)) {
+        vector3Add(output, &body->transform.position, output);
     } else {
         vector3Add(output, sweptObject->prevPos, output);
     }

@@ -42,7 +42,7 @@ struct ContactManifold {
 	struct ContactManifold* next;
 };
 
-#define MAX_CONTACT_COUNT	16
+#define MAX_CONTACT_COUNT	20
 
 struct ContactSolver {
     struct ContactManifold contacts[MAX_CONTACT_COUNT];
@@ -64,6 +64,7 @@ struct ContactManifold* contactSolverNextManifold(struct ContactSolver* solver, 
 
 void contactSolverRemoveUnusedContacts(struct ContactSolver* contactSolver);
 void contactSolverCheckPortalContacts(struct ContactSolver* contactSolver, struct CollisionObject* objectWithNewPortal);
+void contactSolverCleanupManifold(struct ContactManifold* manifold);
 
 #endif
 

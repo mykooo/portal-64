@@ -134,35 +134,32 @@ ExtendedMesh::ExtendedMesh(const ExtendedMesh& other):
         
         mBoneSpanningFaces[it.first] = faces;
     }
-
-    for (auto& it : mNormalInverseTransform) {
-        if (it) {
-            it = new aiMatrix3x3(*it);
-        }
-    }
 }
 
 ExtendedMesh::ExtendedMesh(aiMesh* mesh, BoneHierarchy& boneHierarchy) :
     mMesh(mesh) {
     mVertexBones.resize(mMesh->mNumVertices);
-    mPointInverseTransform.resize(mMesh->mNumVertices);
-    mNormalInverseTransform.resize(mMesh->mNumVertices);
+
+    if (mesh->mNumBones && boneHierarchy.HasData()) {
+        mPointInverseTransform.resize(mMesh->mNumVertices);
+        mNormalInverseTransform.resize(mMesh->mNumVertices);
+    }
 
     std::set<Bone*> bonesAsSet;
 
-    for (unsigned int boneIndex = 0; boneIndex < mMesh->mNumBones; ++boneIndex) {
+    for (unsigned int boneIndex = 0; boneIndex < mMesh->mNumBones && boneHierarchy.HasData(); ++boneIndex) {
         aiBone* bone = mMesh->mBones[boneIndex];
         Bone* hierarchyBone = boneHierarchy.BoneForName(bone->mName.C_Str());
         bonesAsSet.insert(hierarchyBone);
-
+        
         aiMatrix3x3 normalTransform(bone->mOffsetMatrix);
         normalTransform = normalTransform.Transpose().Inverse();
 
         for (unsigned int vertexIndex = 0; vertexIndex < bone->mNumWeights; ++vertexIndex) {
             unsigned int vertexId = bone->mWeights[vertexIndex].mVertexId;
             mVertexBones[vertexId] = hierarchyBone;
-            mPointInverseTransform[vertexId] = &bone->mOffsetMatrix;
-            mNormalInverseTransform[vertexId] = new aiMatrix3x3(normalTransform);
+            mPointInverseTransform[vertexId] = bone->mOffsetMatrix;
+            mNormalInverseTransform[vertexId] = normalTransform;
         }
     }
 
@@ -171,11 +168,7 @@ ExtendedMesh::ExtendedMesh(aiMesh* mesh, BoneHierarchy& boneHierarchy) :
 }
 
 ExtendedMesh::~ExtendedMesh() {
-    for (unsigned int i = 0; i < mNormalInverseTransform.size(); ++i) {
-        if (mNormalInverseTransform[i]) {
-            delete mNormalInverseTransform[i];
-        }
-    }
+
 }
 
 void ExtendedMesh::RecalcBB() {
@@ -234,6 +227,15 @@ std::shared_ptr<ExtendedMesh> ExtendedMesh::Transform(const aiMatrix4x4& transfo
     std::shared_ptr<ExtendedMesh> result(new ExtendedMesh(*this));
 
     aiMatrix3x3 rotationOnly(transform);
+
+    aiMatrix4x4 inverseTransform = transform;
+    inverseTransform.Inverse();
+
+    aiMatrix3x3 inverseRotation = rotationOnly;
+    inverseRotation.Inverse();
+
+
+
     for (unsigned i = 0; i < result->mMesh->mNumVertices; ++i) {
         result->mMesh->mVertices[i] = transform * result->mMesh->mVertices[i];
 
@@ -241,7 +243,13 @@ std::shared_ptr<ExtendedMesh> ExtendedMesh::Transform(const aiMatrix4x4& transfo
             result->mMesh->mNormals[i] = rotationOnly * result->mMesh->mNormals[i];
             result->mMesh->mNormals[i].NormalizeSafe();
         }
+
+        if (result->mPointInverseTransform.size()) {
+            result->mPointInverseTransform[i] = result->mPointInverseTransform[i] * inverseTransform;
+            result->mNormalInverseTransform[i] = result->mNormalInverseTransform[i] * inverseRotation;
+        }
     }
+    
     result->RecalcBB();
 
     return result;
@@ -338,6 +346,8 @@ void cubeProjectSingleFace(aiMesh* mesh, std::set<aiFace*>& faces, double sTile,
     aiVector3D up;
     float minLeft = 10000000000.0f;
     float minUp = 10000000000.0f;
+    float maxLeft = -minLeft;
+    float maxUp = -minUp;
 
     if (fabs(normal.y) > 0.7) {
         up = aiVector3D(0.0f, 0.0f, 1.0f);
@@ -356,8 +366,14 @@ void cubeProjectSingleFace(aiMesh* mesh, std::set<aiFace*>& faces, double sTile,
 
             minLeft = std::min(minLeft, vertex * left);
             minUp = std::min(minUp, vertex * up);
+
+            maxLeft = std::max(maxLeft, vertex * left);
+            maxUp = std::max(maxUp, vertex * up);
         }
     }
+
+    float leftHalfSize = floor((maxLeft - minLeft) * 0.5f * sTile);
+    float upHalfSize = floor((maxUp - minUp) * 0.5f * tTile);
 
     for (auto face : faces) {
         for (unsigned i = 0; i < face->mNumIndices; ++i) {
@@ -367,7 +383,7 @@ void cubeProjectSingleFace(aiMesh* mesh, std::set<aiFace*>& faces, double sTile,
             float sCoord = vertex * left - minLeft;
             float tCoord = vertex * up - minUp;
 
-            mesh->mTextureCoords[0][index] = aiVector3D(sCoord * sTile, tCoord * tTile, 0.0f);
+            mesh->mTextureCoords[0][index] = aiVector3D(sCoord * sTile - leftHalfSize, tCoord * tTile - upHalfSize, 0.0f);
         }
     }
 }

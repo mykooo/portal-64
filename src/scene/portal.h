@@ -56,7 +56,7 @@ struct RenderProps {
 };
 
 void renderPropsInit(struct RenderProps* props, struct Camera* camera, float aspectRatio, struct RenderState* renderState, u16 roomIndex);
-void renderPropsNext(struct RenderProps* current, struct RenderProps* next, struct Transform* fromPortal, struct Transform* toPortal, struct RenderState* renderState);
+int renderPropsNext(struct RenderProps* current, struct RenderProps* next, struct Transform* fromPortal, struct Transform* toPortal, struct RenderState* renderState);
 
 void portalInit(struct Portal* portal, enum PortalFlags flags);
 void portalUpdate(struct Portal* portal, int isOpen);
@@ -64,5 +64,8 @@ void portalRender(struct Portal* portal, struct Portal* otherPortal, struct Rend
 
 int portalAttachToSurface(struct Portal* portal, struct PortalSurface* surface, int surfaceIndex, struct Transform* portalAt);
 void portalCheckForHoles(struct Portal* portals);
+
+// data should be of type struct Transform
+int minkowsiSumAgainstPortal(void* data, struct Vector3* direction, struct Vector3* output);
 
 #endif

@@ -49,7 +49,7 @@ void contactSolverCleanupManifold(struct ContactManifold* manifold) {
 		contactPoint->penetration = vector3Dot(&offset, &manifold->normal);
 
 		// skip this point to remove it
-		if (contactPoint->penetration > SEPERATION_TOLERANCE) {
+		if (fabsf(contactPoint->penetration) > SEPERATION_TOLERANCE) {
 			continue;
 		}
 
@@ -78,6 +78,12 @@ void contactSolverCleanupManifold(struct ContactManifold* manifold) {
 	manifold->contactCount = writeIndex;
 }
 
+void contactSolverManifoldCleanup(struct ContactSolver* contactSolver, struct ContactManifold* contact) {
+	int idMask = ~(1 << (contact - contactSolver->contacts));
+	contact->shapeA->manifoldIds &= idMask;
+	contact->shapeB->manifoldIds &= idMask;
+}
+
 void contactSolverRemoveUnusedContacts(struct ContactSolver* contactSolver) {
 	struct ContactManifold* curr = contactSolver->activeContacts;
 	struct ContactManifold* prev = NULL;
@@ -86,6 +92,8 @@ void contactSolverRemoveUnusedContacts(struct ContactSolver* contactSolver) {
 		contactSolverCleanupManifold(curr);
 
 		if (curr->contactCount == 0) {
+			contactSolverManifoldCleanup(contactSolver, curr);
+
 			if (prev) {
 				prev->next = curr->next;
 			} else {
@@ -136,6 +144,7 @@ void contactSolverCheckPortalContacts(struct ContactSolver* contactSolver, struc
 		}
 
 		if (curr->contactCount == 0) {
+			contactSolverManifoldCleanup(contactSolver, curr);
 			if (prev) {
 				prev->next = curr->next;
 			} else {

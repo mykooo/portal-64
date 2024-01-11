@@ -14,6 +14,7 @@ VTF2PNG:=vtf2png
 SFZ2N64:=sfz2n64
 
 $(SKELATOOL64):
+	skelatool64/setup_dependencies.sh
 	make -C skelatool64
 
 OPTIMIZER		:= -O2
@@ -100,14 +101,14 @@ src/models/sphere.h src/models/sphere_geo.inc.h: assets/fbx/Sphere.fbx
 
 portal_pak_dir: vpk/portal_pak_dir.vpk
 	vpk -x portal_pak_dir vpk/portal_pak_dir.vpk
-	vpk -x portal_pak_dir vpk/hl2/hl2_sound_misc_dir.vpk
+	vpk -x portal_pak_dir vpk/hl2_sound_misc_dir.vpk
 
 
 TEXTURE_SCRIPTS = $(shell find assets/ -type f -name '*.ims')
 TEXTURE_IMAGES = $(TEXTURE_SCRIPTS:assets/%.ims=portal_pak_modified/%.png)
 TEXTURE_VTF_SOURCES = $(TEXTURE_SCRIPTS:assets/%.ims=portal_pak_dir/%.vtf)
 
-ALL_VTF_IMAGES = $(shell find portal_pak_dir/ -type f -name '*.vtf')
+ALL_VTF_IMAGES = $(shell find portal_pak_dir/ -type f ! -name 'portal_create_warp_dudv.vtf' -name '*.vtf')
 ALL_PNG_IMAGES = $(ALL_VTF_IMAGES:%.vtf=%.png)
 
 $(TEXTURE_VTF_SOURCES): portal_pak_dir
@@ -126,7 +127,7 @@ portal_pak_dir/%_copy_1.png: portal_pak_dir/%.png
 portal_pak_dir/%_copy_2.png: portal_pak_dir/%.png
 	cp $< $@
 
-portal_pak_modified/%.png: portal_pak_dir/%.png assets/%.ims 
+portal_pak_modified/%.png: portal_pak_dir/%.png assets/%.ims convert_all_png
 	@mkdir -p $(@D)
 	convert $< $(shell cat $(@:portal_pak_modified/%.png=assets/%.ims)) $@
 
@@ -161,6 +162,7 @@ build/src/scene/elevator.o: build/assets/models/props/round_elevator_collision.h
 
 MODEL_LIST = assets/models/cube/cube.blend \
 	assets/models/portal_gun/v_portalgun.blend \
+	assets/models/portal_gun/w_portalgun.blend \
 	assets/models/props/button.blend \
 	assets/models/props/door_01.blend \
 	assets/models/props/cylinder_test.blend \
@@ -168,18 +170,23 @@ MODEL_LIST = assets/models/cube/cube.blend \
 	assets/models/props/round_elevator.blend \
 	assets/models/props/round_elevator_interior.blend \
 	assets/models/props/round_elevator_collision.blend \
+	assets/models/props/signage.blend \
+	assets/models/props/box_dropper.blend \
+	assets/models/props/box_dropper_glass.blend \
 	assets/models/portal/portal_blue.blend \
 	assets/models/portal/portal_blue_filled.blend \
 	assets/models/portal/portal_blue_face.blend \
 	assets/models/portal/portal_orange.blend \
 	assets/models/portal/portal_orange_filled.blend \
-	assets/models/portal/portal_orange_face.blend
+	assets/models/portal/portal_orange_face.blend \
+	assets/models/pedestal.blend
 
+ANIM_LIST = build/assets/models/pedestal_anim.o build/assets/models/props/box_dropper_anim.o
 
 MODEL_HEADERS = $(MODEL_LIST:%.blend=build/%.h)
 MODEL_OBJECTS = $(MODEL_LIST:%.blend=build/%_geo.o)
 
-build/assets/models/%.h build/assets/models/%_geo.c: build/assets/models/%.fbx assets/models/%.flags assets/materials/elevator.skm.yaml assets/materials/objects.skm.yaml assets/materials/static.skm.yaml $(SKELATOOL64)
+build/assets/models/%.h build/assets/models/%_geo.c build/assets/models/%_anim.c: build/assets/models/%.fbx assets/models/%.flags assets/materials/elevator.skm.yaml assets/materials/objects.skm.yaml assets/materials/static.skm.yaml $(TEXTURE_IMAGES) $(SKELATOOL64)
 	$(SKELATOOL64) --fixed-point-scale 256 --model-scale 0.01 --name $(<:build/assets/models/%.fbx=%) $(shell cat $(<:build/assets/models/%.fbx=assets/models/%.flags)) -o $(<:%.fbx=%.h) $<
 
 build/src/models/models.o: $(MODEL_HEADERS)
@@ -188,18 +195,30 @@ build/src/decor/decor_object_list.o: $(MODEL_HEADERS)
 
 build/src/scene/portal.o: $(MODEL_HEADERS)
 
+build/src/scene/signage.o: $(MODEL_HEADERS)
+
+build/src/scene/box_dropper.o: $(MODEL_HEADERS)
+
+build/src/scene/pedestal.o: $(MODEL_HEADERS)
+
+build/anims.ld: $(ANIM_LIST) tools/generate_animation_ld.js
+	@mkdir -p $(@D)
+	node tools/generate_animation_ld.js $@ $(ANIM_LIST)
+
 ####################
 ## Test Chambers
 ####################
 
-TEST_CHAMBERS = assets/test_chambers/test_chamber_00/test_chamber_00.blend
+TEST_CHAMBERS = assets/test_chambers/test_chamber_00/test_chamber_00.blend \
+	assets/test_chambers/test_chamber_01/test_chamber_01.blend \
+	assets/test_chambers/test_chamber_02/test_chamber_02.blend
 
 TEST_CHAMBER_HEADERS = $(TEST_CHAMBERS:%.blend=build/%.h)
 TEST_CHAMBER_OBJECTS = $(TEST_CHAMBERS:%.blend=build/%_geo.o)
 
 build/%.fbx: %.blend
 	@mkdir -p $(@D)
-	$(BLENDER_2_9) $< --background --python tools/export_fbx.py -- $@
+	$(BLENDER_3_0) $< --background --python tools/export_fbx.py -- $@
 
 build/assets/test_chambers/%.h build/assets/test_chambers/%_geo.c: build/assets/test_chambers/%.fbx build/assets/materials/static.h $(SKELATOOL64) $(TEXTURE_IMAGES)
 	$(SKELATOOL64) --level --fixed-point-scale 256 --model-scale 0.01 --name $(<:build/assets/test_chambers/%.fbx=%) -m assets/materials/static.skm.yaml -o $(<:%.fbx=%.h) $<
@@ -234,12 +253,13 @@ build/src/levels/levels.o: build/assets/test_chambers/level_list.h build/assets/
 ####################
 
 SOUND_ATTRIBUTES = $(shell find assets/ -type f -name '*.sox')
+SOUND_JATTRIBUTES = $(shell find assets/ -type f -name '*.jsox')
 
 MUSIC_ATTRIBUTES = $(shell find assets/sound/music/ -type f -name '*.msox')
 
 INS_SOUNDS = $(shell find assets/ -type f -name '*.ins')
 
-SOUND_CLIPS = $(SOUND_ATTRIBUTES:%.sox=build/%.aifc) $(INS_SOUNDS) $(MUSIC_ATTRIBUTES:%.msox=build/%.aifc)
+SOUND_CLIPS = $(SOUND_ATTRIBUTES:%.sox=build/%.aifc) $(SOUND_JATTRIBUTES:%.jsox=build/%.aifc) $(INS_SOUNDS) $(MUSIC_ATTRIBUTES:%.msox=build/%.aifc)
 
 $(INS_SOUNDS): portal_pak_dir
 
@@ -248,6 +268,11 @@ portal_pak_dir/sound/music/%.wav: portal_pak_dir/sound/music/%.mp3
 build/%.aifc: %.sox portal_pak_dir
 	@mkdir -p $(@D)
 	sox $(<:assets/%.sox=portal_pak_dir/%.wav) $(shell cat $<) $(@:%.aifc=%.wav)
+	$(SFZ2N64) -o $@ $(@:%.aifc=%.wav)
+
+build/%.aifc: %.jsox tools/jsox.js portal_pak_dir
+	@mkdir -p $(@D)
+	node tools/jsox.js $< $(<:assets/%.jsox=portal_pak_dir/%.wav) $(@:%.aifc=%.wav)
 	$(SFZ2N64) -o $@ $(@:%.aifc=%.wav)
 
 build/%.aifc: %.msox portal_pak_dir
@@ -291,7 +316,7 @@ $(CODESEGMENT)_no_debug.o:	$(CODEOBJECTS_NO_DEBUG)
 	$(LD) -o $(CODESEGMENT)_no_debug.o -r $(CODEOBJECTS_NO_DEBUG) $(LDFLAGS)
 
 
-$(CP_LD_SCRIPT)_no_debug.ld: $(LD_SCRIPT) build/levels.ld
+$(CP_LD_SCRIPT)_no_debug.ld: $(LD_SCRIPT) build/levels.ld build/anims.ld
 	cpp -P -Wno-trigraphs $(LCDEFS) -DCODE_SEGMENT=$(CODESEGMENT)_no_debug.o -o $@ $<
 
 $(BASE_TARGET_NAME).z64: $(CODESEGMENT)_no_debug.o $(OBJECTS) $(CP_LD_SCRIPT)_no_debug.ld
@@ -309,7 +334,7 @@ endif
 $(CODESEGMENT)_debug.o:	$(CODEOBJECTS_DEBUG)
 	$(LD) -o $(CODESEGMENT)_debug.o -r $(CODEOBJECTS_DEBUG) $(LDFLAGS)
 
-$(CP_LD_SCRIPT)_debug.ld: $(LD_SCRIPT) build/levels.ld
+$(CP_LD_SCRIPT)_debug.ld: $(LD_SCRIPT) build/levels.ld build/anims.ld
 	cpp -P -Wno-trigraphs $(LCDEFS) -DCODE_SEGMENT=$(CODESEGMENT)_debug.o -o $@ $<
 
 $(BASE_TARGET_NAME)_debug.z64: $(CODESEGMENT)_debug.o $(OBJECTS) $(CP_LD_SCRIPT)_debug.ld

@@ -9,7 +9,7 @@
 
 #define PLAYER_GRABBING_THROUGH_NOTHING -1
 
-#define PLAYER_HEAD_HEIGHT              0.8f
+#define PLAYER_HEAD_HEIGHT              1.0f
 
 enum PlayerFlags {
     PlayerFlagsGrounded = (1 << 0),
@@ -26,9 +26,11 @@ struct Player {
     enum PlayerFlags flags;
 };
 
-void playerInit(struct Player* player, struct Location* startLocation);
+void playerInit(struct Player* player, struct Location* startLocation, struct Vector3* velocity);
 void playerUpdate(struct Player* player, struct Transform* cameraTransform);
 
 void playerRender(struct Player* player, struct RenderState* renderState);
+
+void playerGetMoveBasis(struct Transform* transform, struct Vector3* forward, struct Vector3* right);
 
 #endif

@@ -34,17 +34,31 @@ int sortOrderForMaterial(const Material& material) {
 
 void MaterialGenerator::GenerateDefinitions(const aiScene* scene, CFileDefinition& fileDefinition) {
     std::set<std::shared_ptr<TextureDefinition>> textures;
+    std::set<std::shared_ptr<PalleteDefinition>> palletes;
 
     for (auto& entry : mSettings.mMaterials) {
+        if (entry.second->mExcludeFromOutut) {
+            continue;
+        }
+
         for (int i = 0; i < 8; ++i) {
-            if (entry.second->mState.tiles[i].texture) {
-                textures.insert(entry.second->mState.tiles[i].texture);
+            std::shared_ptr<TextureDefinition> texture = entry.second->mState.tiles[i].texture;
+            if (texture) {
+                textures.insert(texture);
+
+                if (texture->GetPallete()) {
+                    palletes.insert(texture->GetPallete());
+                }
             }
         }
     }
 
     for (auto& texture : textures) {
         fileDefinition.AddDefinition(std::move(texture->GenerateDefinition(fileDefinition.GetUniqueName(texture->Name()), "_mat")));
+    }
+
+    for (auto& pallete : palletes) {
+        fileDefinition.AddDefinition(std::move(pallete->GenerateDefinition(fileDefinition.GetUniqueName(pallete->Name()), "_mat")));
     }
     
     int index = 0;
@@ -55,6 +69,10 @@ void MaterialGenerator::GenerateDefinitions(const aiScene* scene, CFileDefinitio
     std::vector<std::shared_ptr<Material>> materialsAsVector;
 
     for (auto& entry : mSettings.mMaterials) {
+        if (entry.second->mExcludeFromOutut) {
+            continue;
+        }
+        
         materialsAsVector.push_back(entry.second);
     }
 
@@ -67,9 +85,9 @@ void MaterialGenerator::GenerateDefinitions(const aiScene* scene, CFileDefinitio
 
         DisplayList dl(name);
         if (entry->mName == mSettings.mDefaultMaterialName) {
-            entry->Write(fileDefinition, MaterialState(), dl.GetDataChunk());
+            entry->Write(fileDefinition, MaterialState(), dl.GetDataChunk(), mSettings.mTargetCIBuffer);
         } else {
-            entry->Write(fileDefinition, mSettings.mDefaultMaterialState, dl.GetDataChunk());
+            entry->Write(fileDefinition, mSettings.mDefaultMaterialState, dl.GetDataChunk(), mSettings.mTargetCIBuffer);
         }
         std::unique_ptr<FileDefinition> material = dl.Generate("_mat");
         materialList->AddPrimitive(material->GetName());
@@ -77,7 +95,7 @@ void MaterialGenerator::GenerateDefinitions(const aiScene* scene, CFileDefinitio
 
         std::string revertName = fileDefinition.GetUniqueName(entry->mName + "_revert");
         DisplayList revertDL(revertName);
-        generateMaterial(fileDefinition, entry->mState, mSettings.mDefaultMaterialState, revertDL.GetDataChunk());
+        generateMaterial(fileDefinition, entry->mState, mSettings.mDefaultMaterialState, revertDL.GetDataChunk(), mSettings.mTargetCIBuffer);
         std::unique_ptr<FileDefinition> materialRevert = revertDL.Generate("_mat");
         revertList->AddPrimitive(materialRevert->GetName());
         fileDefinition.AddDefinition(std::move(materialRevert));

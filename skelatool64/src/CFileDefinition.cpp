@@ -53,6 +53,9 @@ unsigned convertByteRange(float value) {
 
  ErrorResult VertexBufferDefinition::Generate(float fixedPointScale, float modelScale, aiQuaternion rotate, std::unique_ptr<FileDefinition>& output, const std::string& fileSuffix) {
     std::unique_ptr<StructureDataChunk> dataChunk(new StructureDataChunk());
+
+    // aiQuaternion rotateInverse = rotate;
+    // rotateInverse.Conjugate();
     
     for (unsigned int i = 0; i < mTargetMesh->mMesh->mNumVertices; ++i) {
         std::unique_ptr<StructureDataChunk> vertexWrapper(new StructureDataChunk());
@@ -61,12 +64,10 @@ unsigned convertByteRange(float value) {
 
         aiVector3D pos = mTargetMesh->mMesh->mVertices[i];
 
-        pos = pos * modelScale;
-
-        if (mTargetMesh->mPointInverseTransform[i]) {
-            pos = (*mTargetMesh->mPointInverseTransform[i]) * pos;
+        if (mTargetMesh->mPointInverseTransform.size()) {
+            pos = mTargetMesh->mPointInverseTransform[i] * pos;
         } else {
-            pos = rotate.Rotate(pos);
+            pos = rotate.Rotate(pos) * modelScale;
         }
 
         pos = pos * fixedPointScale;
@@ -151,22 +152,33 @@ unsigned convertByteRange(float value) {
                 break;
             }
 
-            if (mTargetMesh->mPointInverseTransform[i]) {
-                normal = (*mTargetMesh->mNormalInverseTransform[i]) * normal;
-                normal.Normalize();
+            if (mTargetMesh->mPointInverseTransform.size()) {
+                normal = mTargetMesh->mNormalInverseTransform[i] * normal;
+                normal.NormalizeSafe();
             } else {
                 normal = rotate.Rotate(normal);
+            }
+
+            float a = 1.0f;
+
+            if (mTargetMesh->mMesh->mColors[1] != nullptr) {
+                a = mTargetMesh->mMesh->mColors[1][i].r;
             }
 
             vertexNormal->AddPrimitive(convertNormalizedRange(normal.x));
             vertexNormal->AddPrimitive(convertNormalizedRange(normal.y));
             vertexNormal->AddPrimitive(convertNormalizedRange(normal.z));
-            vertexNormal->AddPrimitive(255);
+            vertexNormal->AddPrimitive(convertByteRange(a));
             break;
         }
         case VertexType::PosUVColor:
             if (mTargetMesh->mMesh->mColors[0] != nullptr) {
                 aiColor4D color = mTargetMesh->mMesh->mColors[0][i];
+                
+                if (mTargetMesh->mMesh->mColors[1] != nullptr) {
+                    color.a = mTargetMesh->mMesh->mColors[1][i].r;
+                }
+
                 vertexNormal->AddPrimitive(convertByteRange(color.r));
                 vertexNormal->AddPrimitive(convertByteRange(color.g));
                 vertexNormal->AddPrimitive(convertByteRange(color.b));
@@ -216,6 +228,10 @@ std::string CFileDefinition::AddDataDefinition(const std::string& nameHint, cons
 
 void CFileDefinition::AddMacro(const std::string& name, const std::string& value) {
     mMacros.push_back(name + " " + value);
+}
+
+void CFileDefinition::AddHeader(const std::string& name) {
+    mHeaders.insert(name);
 }
 
 std::string CFileDefinition::GetVertexBuffer(std::shared_ptr<ExtendedMesh> mesh, VertexType vertexType, int textureWidth, int textureHeight, const std::string& modelSuffix) {
@@ -367,7 +383,7 @@ void CFileDefinition::Generate(std::ostream& output, const std::string& location
 }
 
 void CFileDefinition::GenerateHeader(std::ostream& output, const std::string& headerFileName) {
-    std::string infdef = std::string("__") + headerFileName + "_H__";
+    std::string infdef = std::string("__SKOUT_") + headerFileName + "_H__";
 
     makeCCompatible(infdef);
     std::transform(infdef.begin(), infdef.end(), infdef.begin(), ::toupper);
@@ -376,7 +392,7 @@ void CFileDefinition::GenerateHeader(std::ostream& output, const std::string& he
     output << "#define " << infdef << std::endl;
     output << std::endl;
 
-    std::set<std::string> includes;
+    std::set<std::string> includes = mHeaders;
 
     for (auto it = mDefinitions.begin(); it != mDefinitions.end(); ++it) {
         auto headers = (*it)->GetTypeHeaders();

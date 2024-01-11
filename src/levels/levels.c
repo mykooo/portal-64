@@ -7,12 +7,23 @@
 #include "static_render.h"
 #include "cutscene_runner.h"
 #include "../graphics/graphics.h"
+#include "../player/player.h"
 
 #include "../util/rom.h"
 #include "../util/memory.h"
 
 struct LevelDefinition* gCurrentLevel;
+int gCurrentLevelIndex;
 u64 gTriggeredCutscenes;
+
+int gQueuedLevel = NO_QUEUED_LEVEL;
+struct Transform gRelativeTransform = {
+    {0.0f, PLAYER_HEAD_HEIGHT, 0.0f},
+    {0.0f, 0.0f, 0.0f, 1.0f},
+    {1.0f, 1.0f, 1.0f},
+};
+
+struct Vector3 gRelativeVelocity;
 
 int levelCount() {
     return LEVEL_COUNT;
@@ -68,6 +79,9 @@ struct LevelDefinition* levelFixPointers(struct LevelDefinition* from, int point
     result->decor = ADJUST_POINTER_POS(result->decor, pointerOffset);
     result->fizzlers = ADJUST_POINTER_POS(result->fizzlers, pointerOffset);
     result->elevators = ADJUST_POINTER_POS(result->elevators, pointerOffset);
+    result->pedestals = ADJUST_POINTER_POS(result->pedestals, pointerOffset);
+    result->signage = ADJUST_POINTER_POS(result->signage, pointerOffset);
+    result->boxDroppers = ADJUST_POINTER_POS(result->boxDroppers, pointerOffset);
 
     return result;
 }
@@ -85,9 +99,33 @@ void levelLoad(int index) {
     gLevelSegment = memory;
 
     gCurrentLevel = levelFixPointers(metadata->levelDefinition, (char*)memory - metadata->segmentStart);
+    gCurrentLevelIndex = index;
     gTriggeredCutscenes = 0;
+    gQueuedLevel = NO_QUEUED_LEVEL;
 
     collisionSceneInit(&gCollisionScene, gCurrentLevel->collisionQuads, gCurrentLevel->collisionQuadCount, &gCurrentLevel->world);
+}
+
+void levelQueueLoad(int index, struct Transform* relativeExitTransform, struct Vector3* relativeVelocity) {
+    if (index == NEXT_LEVEL) {
+        gQueuedLevel = gCurrentLevelIndex + 1;
+    } else {
+        gQueuedLevel = index;
+    }
+    gRelativeTransform = *relativeExitTransform;
+    gRelativeVelocity = *relativeVelocity;
+}
+
+int levelGetQueued() {
+    return gQueuedLevel;
+}
+
+struct Transform* levelRelativeTransform() {
+    return &gRelativeTransform;
+}
+
+struct Vector3* levelRelativeVelocity() {
+    return &gRelativeVelocity;
 }
 
 int levelMaterialCount() {
