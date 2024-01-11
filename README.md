@@ -1,4 +1,12 @@
 # Portal64
+
+## ⚠ This project is no longer maintained by the original author!
+![](./assets/images/nintendo-valve-dmca-takedown.jpeg)
+
+<br />
+<hr />
+<br />
+
 ![](./assets/images/portal64_readme_logo.gif)
 
 A demake *(remake for an older platform)* of Portal for the Nintendo 64.
