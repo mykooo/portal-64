@@ -77,12 +77,6 @@ int savefileSramLoad(void* sramAddr, void* ramAddr, int size) {
     return 1;
 }
 
-static void savefileUpdateSlot(int slotIndex, unsigned char testChamber, unsigned char subjectNumber, unsigned char slotOrder) {
-    gSaveData.saveSlotMetadata[slotIndex].testChamber = testChamber;
-    gSaveData.saveSlotMetadata[slotIndex].testSubjectNumber = subjectNumber;
-    gSaveData.saveSlotMetadata[slotIndex].saveSlotOrder = slotOrder;
-}
-
 void savefileNew() {
     zeroMemory(&gSaveData, sizeof(gSaveData));
     gSaveData.header.header = SAVEFILE_HEADER;
@@ -91,7 +85,7 @@ void savefileNew() {
     gSaveData.header.flags = 0;
 
     for (int i = 0; i < MAX_SAVE_SLOTS; ++i) {
-        savefileUpdateSlot(i, NO_TEST_CHAMBER, 0xFF, 0xFF);
+        savefileDeleteGame(i);
     }
 
     controllerSetDefaultSource();
@@ -168,7 +162,9 @@ void savefileDeleteGame(int slotIndex) {
         }
     }
 
-    savefileUpdateSlot(slotIndex, NO_TEST_CHAMBER, 0xFF, 0xFF);
+    gSaveData.saveSlotMetadata[slotIndex].testChamber = NO_TEST_CHAMBER;
+    gSaveData.saveSlotMetadata[slotIndex].testSubjectNumber = 0xFF;
+    gSaveData.saveSlotMetadata[slotIndex].saveSlotOrder = 0xFF;
 
     savefileSave();
 }
@@ -188,7 +184,9 @@ void savefileSaveGame(Checkpoint checkpoint, u16* screenshot, int testChamberDis
         }
     }
 
-    savefileUpdateSlot(slotIndex, testChamberDisplayNumber, subjectNumber, 0);
+    gSaveData.saveSlotMetadata[slotIndex].testChamber = testChamberDisplayNumber;
+    gSaveData.saveSlotMetadata[slotIndex].testSubjectNumber = subjectNumber;
+    gSaveData.saveSlotMetadata[slotIndex].saveSlotOrder = 0;
 
     savefileSave();
 }
