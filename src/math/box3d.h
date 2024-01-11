@@ -8,4 +8,8 @@ struct Box3D {
     struct Vector3 max;
 };
 
+int box3DContainsPoint(struct Box3D* box, struct Vector3* point);
+
+int box3DHasOverlap(struct Box3D* a, struct Box3D* b);
+
 #endif

@@ -2,122 +2,91 @@
 
 #include "levels.h"
 #include "util/memory.h"
+#include "defs.h"
+#include "../graphics/render_scene.h"
+#include "../math/mathf.h"
 
-u16* gRenderOrder;
-u16* gRenderOrderCopy;
-int* gSortKey;
+void staticRenderPopulateRooms(struct FrustrumCullingInformation* cullingInfo, struct RenderScene* renderScene) {
+    int currentRoom = 0;
 
-void staticRenderInit() {
-    gRenderOrder = malloc(sizeof(u16) * gCurrentLevel->staticContentCount);
-    gRenderOrderCopy = malloc(sizeof(u16) * gCurrentLevel->staticContentCount);
-    gSortKey = malloc(sizeof(int) * gCurrentLevel->staticContentCount);
+    u64 visibleRooms = renderScene->visibleRooms;
+
+    while (visibleRooms) {
+        if (0x1 & visibleRooms) {
+            struct Rangeu16 staticRange = gCurrentLevel->roomStaticMapping[currentRoom];
+
+            for (int i = staticRange.min; i < staticRange.max; ++i) {
+                struct BoundingBoxs16* box = &gCurrentLevel->staticBoundingBoxes[i];
+
+                if (isOutsideFrustrum(cullingInfo, box)) {
+                    continue;
+                }
+
+                struct Vector3 boxCenter;
+                boxCenter.x = (float)(box->minX + box->maxX) * (0.5f / SCENE_SCALE);
+                boxCenter.y = (float)(box->minY + box->maxY) * (0.5f / SCENE_SCALE);
+                boxCenter.z = (float)(box->minZ + box->maxZ) * (0.5f / SCENE_SCALE);
+
+                renderSceneAdd(renderScene, gCurrentLevel->staticContent[i].displayList, NULL, gCurrentLevel->staticContent[i].materialIndex, &boxCenter, NULL);
+            }
+        }
+
+        visibleRooms >>= 1;
+        ++currentRoom;
+    }
 }
 
-int staticRenderGenerateSortKey(int index) {
-    // TODO determine distance
-    return (int)gCurrentLevel->staticContent[index].materialIndex << 23;
-}
+#define FORCE_RENDER_DOORWAY_DISTANCE   0.1f
 
-void staticRenderSort(int min, int max) {
-    if (min + 1 >= max) {
+void staticRenderDetermineVisibleRooms(struct FrustrumCullingInformation* cullingInfo, u16 currentRoom, u64* visitedRooms) {
+    if (currentRoom == RIGID_BODY_NO_ROOM) {
         return;
     }
 
-    int middle = (min + max) >> 1;
-    staticRenderSort(min, middle);
-    staticRenderSort(middle, max);
+    u64 roomMask = 1LL << currentRoom;
 
-    int aHead = min;
-    int bHead = middle;
-    int output = min;
+    if (*visitedRooms & roomMask) {
+        return;
+    }
 
-    while (aHead < middle && bHead < max) {
-        int sortDifference = gSortKey[gRenderOrder[aHead]] - gSortKey[gRenderOrder[bHead]];
+    *visitedRooms |= roomMask;
 
-        if (sortDifference <= 0) {
-            gRenderOrderCopy[output] = gRenderOrder[aHead];
-            ++output;
-            ++aHead;
-        } else {
-            gRenderOrderCopy[output] = gRenderOrder[bHead];
-            ++output;
-            ++bHead;
+    for (int i = 0; i < gCurrentLevel->world.rooms[currentRoom].doorwayCount; ++i) {
+        struct Doorway* doorway = &gCurrentLevel->world.doorways[gCurrentLevel->world.rooms[currentRoom].doorwayIndices[i]];
+
+        if ((doorway->flags & DoorwayFlagsOpen) == 0) {
+            continue;
         }
-    }
 
-    while (aHead < middle) {
-        gRenderOrderCopy[output] = gRenderOrder[aHead];
-        ++output;
-        ++aHead;
-    }
+        float doorwayDistance = planePointDistance(&doorway->quad.plane, &cullingInfo->cameraPos);
 
-    while (bHead < max) {
-        gRenderOrderCopy[output] = gRenderOrder[bHead];
-        ++output;
-        ++bHead;
-    }
+        if (
+            // if the player is close enough to the doorway it should still render it, even if facing the wrong way
+            (fabsf(doorwayDistance) > FORCE_RENDER_DOORWAY_DISTANCE || collisionQuadDetermineEdges(&cullingInfo->cameraPos, &doorway->quad)) && 
+            isQuadOutsideFrustrum(cullingInfo, &doorway->quad)) {
+            continue;
+        }
 
-    for (output = min; output < max; ++output) {
-        gRenderOrder[output] = gRenderOrderCopy[output];
-    }
+        staticRenderDetermineVisibleRooms(cullingInfo, currentRoom == doorway->roomA ? doorway->roomB : doorway->roomA, visitedRooms);
+    };
 }
 
-int isOutsideFrustrum(struct FrustrumCullingInformation* frustrum, struct BoundingBoxs16* boundingBox) {
-    for (int i = 0; i < CLIPPING_PLANE_COUNT; ++i) {
-        struct Vector3 closestPoint;
-
-        closestPoint.x = frustrum->clippingPlanes[i].normal.x < 0.0f ? boundingBox->minX : boundingBox->maxX;
-        closestPoint.y = frustrum->clippingPlanes[i].normal.y < 0.0f ? boundingBox->minY : boundingBox->maxY;
-        closestPoint.z = frustrum->clippingPlanes[i].normal.z < 0.0f ? boundingBox->minZ : boundingBox->maxZ;
-
-        if (planePointDistance(&frustrum->clippingPlanes[i], &closestPoint) < 0.0f) {
-            return 1;
-        }
-    }
-
-
-    return 0;
+int staticRenderIsRoomVisible(u64 visibleRooms, u16 roomIndex) {
+    return (visibleRooms & (1LL << roomIndex)) != 0;
 }
 
-void staticRender(struct FrustrumCullingInformation* cullingInfo, struct RenderState* renderState) {
+void staticRender(struct Transform* cameraTransform, struct FrustrumCullingInformation* cullingInfo, u64 visibleRooms, struct RenderState* renderState) {
     if (!gCurrentLevel) {
         return;
     }
 
-    int renderCount = 0;
+    struct RenderScene* renderScene = renderSceneNew(cameraTransform, renderState, MAX_RENDER_COUNT, visibleRooms);
 
-    for (int i = 0; i < gCurrentLevel->staticContentCount; ++i) {
-        if (isOutsideFrustrum(cullingInfo, &gCurrentLevel->staticBoundingBoxes[i])) {
-            continue;
-        }
+    staticRenderPopulateRooms(cullingInfo, renderScene);
 
-        // TODO filter
-        gRenderOrder[renderCount] = i;
-        gSortKey[renderCount] = staticRenderGenerateSortKey(i);
-        ++renderCount;
-    }
+    dynamicScenePopulate(cullingInfo, renderScene);
 
-    staticRenderSort(0, renderCount);
+    renderSceneGenerate(renderScene, renderState);
 
-    int prevMaterial = -1;
-    
-    for (int i = 0; i < renderCount; ++i) {
-        struct StaticContentElement* element = &gCurrentLevel->staticContent[gRenderOrder[i]];
-        
-        if (element->materialIndex != prevMaterial) {
-            if (prevMaterial != -1) {
-                gSPDisplayList(renderState->dl++, levelMaterialRevert(prevMaterial));
-            }
-
-            gSPDisplayList(renderState->dl++, levelMaterial(element->materialIndex));
-
-            prevMaterial = element->materialIndex;
-        }
-
-        gSPDisplayList(renderState->dl++, element->displayList);
-    }
-
-    if (prevMaterial != -1) {
-        gSPDisplayList(renderState->dl++, levelMaterialRevert(prevMaterial));
-    }
+    renderSceneFree(renderScene);
 }

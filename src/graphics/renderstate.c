@@ -1,9 +1,11 @@
 #include "renderstate.h"
 
-void renderStateInit(struct RenderState* renderState) {
+void renderStateInit(struct RenderState* renderState, u16* framebuffer, u16* depthBuffer) {
     renderState->dl = renderState->glist;
     renderState->currentMemoryChunk = 0;
     renderState->currentChunkEnd = MAX_DL_LENGTH;
+    renderState->framebuffer = framebuffer;
+    renderState->depthBuffer = depthBuffer;
 }
 
 void* renderStateRequestMemory(struct RenderState* renderState, unsigned size) {
@@ -28,6 +30,10 @@ Light* renderStateRequestLights(struct RenderState* renderState, unsigned count)
 
 Vp* renderStateRequestViewport(struct RenderState* renderState) {
     return renderStateRequestMemory(renderState, sizeof(Vp));
+}
+
+Vtx* renderStateRequestVertices(struct RenderState* renderState, unsigned count) {
+    return renderStateRequestMemory(renderState, sizeof(Vtx) * count);
 }
 
 void renderStateFlushCache(struct RenderState* renderState) {

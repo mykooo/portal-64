@@ -11,6 +11,9 @@
 #include "string.h"
 #include "controls/controller.h"
 #include "scene/dynamic_scene.h"
+#include "audio/soundplayer.h"
+#include "audio/audio.h"
+#include "scene/portal_surface.h"
 
 #include "levels/levels.h"
 
@@ -36,13 +39,13 @@ static OSMesg           gfxFrameMsgBuf[MAX_FRAME_BUFFER_MESGS];
 static OSScClient       gfxClient;
 
 
-static OSSched scheduler;
+OSSched scheduler;
 u64            scheduleStack[OS_SC_STACKSIZE/8];
 OSMesgQueue	*schedulerCommandQueue;
 
 OSPiHandle	*gPiHandle;
 
-void main(void *arg) {
+void boot(void *arg) {
     osInitialize();
 
     gPiHandle = osCartRomInit();
@@ -82,7 +85,7 @@ static void initProc(void* arg) {
     for(;;);
 }
 
-static struct Scene gScene;
+struct Scene gScene;
 
 extern OSMesgQueue dmaMessageQ;
 
@@ -93,13 +96,13 @@ static void gameProc(void* arg) {
 
 	switch (osTvType) {
 		case 0: // PAL
-			schedulerMode = OS_VI_PAL_LPF1;
+			schedulerMode = HIGH_RES ? OS_VI_PAL_HPF1 : OS_VI_PAL_LPF1;
 			break;
 		case 1: // NTSC
-			schedulerMode = OS_VI_NTSC_LPF1;
+			schedulerMode = HIGH_RES ? OS_VI_NTSC_HPF1 : OS_VI_NTSC_LPF1;
 			break;
 		case 2: // MPAL
-            schedulerMode = OS_VI_MPAL_LPF1;
+            schedulerMode = HIGH_RES ? OS_VI_MPAL_HPF1 : OS_VI_MPAL_LPF1;
 			break;
 	}
 
@@ -108,8 +111,7 @@ static void gameProc(void* arg) {
         (void *)(scheduleStack + OS_SC_STACKSIZE/8),
         SCHEDULER_PRIORITY,
         schedulerMode,
-        // 30 fps
-        2
+        1
     );
 
     schedulerCommandQueue = osScGetCmdQ(&scheduler);
@@ -122,24 +124,36 @@ static void gameProc(void* arg) {
 			OS_VI_DIVOT_OFF |
 			OS_VI_DITHER_FILTER_OFF);
 
+    osViBlack(1);
+
     u32 pendingGFX = 0;
     u32 drawBufferIndex = 0;
+    u8 frameControl = 0;
+    u8 inputIgnore = 5;
+    u8 drawingEnabled = 0;
 
     u16* memoryEnd = graphicsLayoutScreenBuffers((u16*)PHYS_TO_K0(osMemSize));
+
+    gAudioHeapBuffer = (u8*)memoryEnd - AUDIO_HEAP_SIZE;
+
+    memoryEnd = (u16*)gAudioHeapBuffer;
 
     heapInit(_heapStart, memoryEnd);
     romInit();
 
-    dynamicSceneInit();
-    contactSolverInit(&gContactSolver);
-    levelLoad(0);
-    sceneInit(&gScene);
-    controllersInit();
 #ifdef WITH_DEBUGGER
     OSThread* debugThreads[2];
     debugThreads[0] = &gameThread;
     gdbInitDebugger(gPiHandle, &dmaMessageQ, debugThreads, 1);
 #endif
+
+    dynamicSceneInit();
+    contactSolverInit(&gContactSolver);
+    levelLoad(0);
+    controllersInit();
+    initAudio();
+    soundPlayerInit();
+    sceneInit(&gScene);
 
     while (1) {
         OSScMsg *msg = NULL;
@@ -147,24 +161,33 @@ static void gameProc(void* arg) {
         
         switch (msg->type) {
             case (OS_SC_RETRACE_MSG):
-                static int renderSkip = 1;
+                // control the framerate
+                frameControl = (frameControl + 1) % (FRAME_SKIP + 1);
+                if (frameControl != 0) {
+                    break;
+                }
 
-                if (pendingGFX < 2 && !renderSkip) {
+                if (pendingGFX < 2 && drawingEnabled) {
                     graphicsCreateTask(&gGraphicsTasks[drawBufferIndex], (GraphicsCallback)sceneRender, &gScene);
                     drawBufferIndex = drawBufferIndex ^ 1;
                     ++pendingGFX;
-                } else if (renderSkip) {
-                    --renderSkip;
                 }
 
                 controllersTriggerRead();
-                sceneUpdate(&gScene);
+                if (inputIgnore) {
+                    --inputIgnore;
+                } else {
+                    sceneUpdate(&gScene);
+                    drawingEnabled = 1;
+                }
                 timeUpdateDelta();
+                soundPlayerUpdate();
 
                 break;
 
             case (OS_SC_DONE_MSG):
                 --pendingGFX;
+                portalSurfaceCheckCleanupQueue();
                 break;
             case (OS_SC_PRE_NMI_MSG):
                 pendingGFX += 2;

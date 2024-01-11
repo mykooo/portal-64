@@ -22,69 +22,116 @@
 #include "../math/mathf.h"
 #include "./hud.h"
 #include "dynamic_scene.h"
+#include "../audio/soundplayer.h"
+#include "../audio/clips.h"
+#include "../levels/cutscene_runner.h"
+#include "../util/memory.h"
+#include "../decor/decor_object_list.h"
+#include "signals.h"
 
-struct Vector3 gStartPosition = {5.0f, 1.2f, -5.0f};
-struct Vector3 gPortalGunOffset = {0.100957, -0.113587, -0.28916};
+struct Vector3 gPortalGunOffset = {0.120957, -0.113587, -0.20916};
 struct Vector3 gPortalGunForward = {0.1f, -0.1f, 1.0f};
 struct Vector3 gPortalGunUp = {0.0f, 1.0f, 0.0f};
 
 Lights1 gSceneLights = gdSPDefLights1(128, 128, 128, 128, 128, 128, 0, 127, 0);
 
-void sceneInit(struct Scene* scene) {
-    cameraInit(&scene->camera, 45.0f, 0.125f * SCENE_SCALE, 80.0f * SCENE_SCALE);
-    playerInit(&scene->player);
+void sceneUpdateListeners(struct Scene* scene);
 
-    scene->player.body.transform.position = gStartPosition;
-    quatAxisAngle(&gUp, M_PI, &scene->player.body.transform.rotation);
+void sceneInit(struct Scene* scene) {
+    signalsInit(1);
+
+    cameraInit(&scene->camera, 70.0f, 0.125f * SCENE_SCALE, 40.0f * SCENE_SCALE);
+    playerInit(&scene->player, levelGetLocation(gCurrentLevel->startLocation));
+    sceneUpdateListeners(scene);
 
     portalInit(&scene->portals[0], 0);
     portalInit(&scene->portals[1], PortalFlagsOddParity);
-    gCollisionScene.portalTransforms[0] = &scene->portals[0].transform;
-    gCollisionScene.portalTransforms[1] = &scene->portals[1].transform;
 
-    scene->portals[0].transform.position.x = 5.0f;
-    scene->portals[0].transform.position.y = 1.0f;
-    scene->portals[0].transform.position.z = -0.1f;
+    scene->buttonCount = gCurrentLevel->buttonCount;
+    scene->buttons = malloc(sizeof(struct Button) * scene->buttonCount);
 
-    scene->portals[1].transform.position.x = 0.1f;
-    scene->portals[1].transform.position.y = 1.0f;
-    scene->portals[1].transform.position.z = -6.0f;
+    for (int i = 0; i < scene->buttonCount; ++i) {
+        buttonInit(&scene->buttons[i], &gCurrentLevel->buttons[i]);
+    }
 
+    scene->decorCount = gCurrentLevel->decorCount;
+    scene->decor = malloc(sizeof(struct DecorObject*) * scene->decorCount);
 
-    quatAxisAngle(&gUp, M_PI * 0.5f, &scene->portals[1].transform.rotation);
+    for (int i = 0; i < scene->decorCount; ++i) {
+        struct DecorDefinition* decorDef = &gCurrentLevel->decor[i];
+        struct Transform decorTransform;
+        decorTransform.position = decorDef->position;
+        decorTransform.rotation = decorDef->rotation;
+        decorTransform.scale = gOneVec;
+        scene->decor[i] = decorObjectNew(decorObjectDefinitionForId(decorDef->decorId), &decorTransform, decorDef->roomIndex);
+    }
 
-    cubeInit(&scene->cube);
+    scene->doorCount = gCurrentLevel->doorCount;
+    scene->doors = malloc(sizeof(struct Door) * scene->doorCount);
+    for (int i = 0; i < scene->doorCount; ++i) {
+        doorInit(&scene->doors[i], &gCurrentLevel->doors[i], &gCurrentLevel->world);
+    }
 
-    scene->cube.rigidBody.transform.position.x = 5.0f;
-    scene->cube.rigidBody.transform.position.y = 1.0f;
-    scene->cube.rigidBody.transform.position.z = -1.0f;
+    scene->fizzlerCount = gCurrentLevel->fizzlerCount;
+    scene->fizzlers = malloc(sizeof(struct Fizzler) * scene->fizzlerCount);
+    for (int i = 0; i < scene->fizzlerCount; ++i) {
+        struct FizzlerDefinition* fizzlerDef = &gCurrentLevel->fizzlers[i];
 
-    quatAxisAngle(&gRight, M_PI * 0.125f, &scene->cube.rigidBody.transform.rotation);
-    scene->cube.rigidBody.angularVelocity = gOneVec;
+        struct Transform fizzlerTransform;
+        fizzlerTransform.position = fizzlerDef->position;
+        fizzlerTransform.rotation = fizzlerDef->rotation;
+        fizzlerTransform.scale = gOneVec;
+        fizzlerInit(&scene->fizzlers[i], &fizzlerTransform, fizzlerDef->width, fizzlerDef->height, fizzlerDef->roomIndex);
+    }
+
+    scene->elevatorCount = gCurrentLevel->elevatorCount;
+    scene->elevators = malloc(sizeof(struct Elevator) * scene->elevatorCount);
+    for (int i = 0; i < scene->elevatorCount; ++i) {
+        elevatorInit(&scene->elevators[i], &gCurrentLevel->elevators[i]);
+    }
 }
 
 void sceneRenderWithProperties(void* data, struct RenderProps* properties, struct RenderState* renderState) {
     struct Scene* scene = (struct Scene*)data;
 
+    u64 visibleRooms = 0;
+    staticRenderDetermineVisibleRooms(&properties->cullingInfo, properties->fromRoom, &visibleRooms);
+
     int closerPortal = vector3DistSqrd(&properties->camera.transform.position, &scene->portals[0].transform.position) > vector3DistSqrd(&properties->camera.transform.position, &scene->portals[1].transform.position) ? 0 : 1;
+    int otherPortal = 1 - closerPortal;
 
-    if (properties->fromPortalIndex != closerPortal) {
-        portalRender(&scene->portals[closerPortal], &scene->portals[1 - closerPortal], properties, sceneRenderWithProperties, data, renderState);
+    for (int i = 0; i < 2; ++i) {
+        if (gCollisionScene.portalTransforms[closerPortal] && 
+            properties->fromPortalIndex != closerPortal && 
+            staticRenderIsRoomVisible(visibleRooms, gCollisionScene.portalRooms[closerPortal])) {
+            portalRender(
+                &scene->portals[closerPortal], 
+                gCollisionScene.portalTransforms[otherPortal] ? &scene->portals[otherPortal] : NULL, 
+                properties, 
+                sceneRenderWithProperties, 
+                data, 
+                renderState
+            );
+        }
+
+        closerPortal = 1 - closerPortal;
+        otherPortal = 1 - otherPortal;
     }
-    if (properties->fromPortalIndex != 1 - closerPortal) {
-        portalRender(&scene->portals[1 - closerPortal], &scene->portals[closerPortal], properties, sceneRenderWithProperties, data, renderState);
+
+    if (controllerGetButton(1, A_BUTTON) && properties->currentDepth == 2) {
+        return;
     }
 
-    gDPSetRenderMode(renderState->dl++, G_RM_ZB_OPA_SURF, G_RM_ZB_OPA_SURF2);
-
-    staticRender(&properties->cullingInfo, renderState);
-
-    dynamicSceneRender(renderState, 0);
+    staticRender(&properties->camera.transform, &properties->cullingInfo, visibleRooms, renderState);
 }
 
 #define SOLID_COLOR        0, 0, 0, ENVIRONMENT, 0, 0, 0, ENVIRONMENT
 
 void sceneRenderPerformanceMetrics(struct Scene* scene, struct RenderState* renderState, struct GraphicsTask* task) {
+    if (!scene->lastFrameTime) {
+        return;
+    }
+
     gDPSetCycleType(renderState->dl++, G_CYC_1CYCLE);
     gDPSetFillColor(renderState->dl++, (GPACK_RGBA5551(0, 0, 0, 1) << 16 | GPACK_RGBA5551(0, 0, 0, 1)));
     gDPSetCombineMode(renderState->dl++, SOLID_COLOR, SOLID_COLOR);
@@ -98,10 +145,10 @@ void sceneRenderPerformanceMetrics(struct Scene* scene, struct RenderState* rend
 
 void sceneRenderPortalGun(struct Scene* scene, struct RenderState* renderState) {
     struct Transform gunTransform;
-    transformPoint(&scene->player.body.transform, &gPortalGunOffset, &gunTransform.position);
+    transformPoint(&scene->player.lookTransform, &gPortalGunOffset, &gunTransform.position);
     struct Quaternion relativeRotation;
     quatLook(&gPortalGunForward, &gPortalGunUp, &relativeRotation);
-    quatMultiply(&scene->player.body.transform.rotation, &relativeRotation, &gunTransform.rotation);
+    quatMultiply(&scene->player.lookTransform.rotation, &relativeRotation, &gunTransform.rotation);
     gunTransform.scale = gOneVec;
     Mtx* matrix = renderStateRequestMatrices(renderState, 1);
     transformToMatrixL(&gunTransform, matrix, SCENE_SCALE);
@@ -116,13 +163,13 @@ void sceneRender(struct Scene* scene, struct RenderState* renderState, struct Gr
     
     struct RenderProps renderProperties;
 
-    renderPropsInit(&renderProperties, &scene->camera, (float)SCREEN_WD / (float)SCREEN_HT, renderState);
+    renderPropsInit(&renderProperties, &scene->camera, (float)SCREEN_WD / (float)SCREEN_HT, renderState, scene->player.body.currentRoom);
 
     renderProperties.camera = scene->camera;
 
     gDPSetRenderMode(renderState->dl++, G_RM_ZB_OPA_SURF, G_RM_ZB_OPA_SURF2);
 
-    dynamicSceneRender(renderState, 1);
+    dynamicSceneRenderTouchingPortal(&scene->camera.transform, &renderProperties.cullingInfo, renderState);
 
     sceneRenderWithProperties(scene, &renderProperties, renderState);
 
@@ -142,17 +189,56 @@ void sceneRender(struct Scene* scene, struct RenderState* renderState, struct Gr
 void sceneCheckPortals(struct Scene* scene) {
     struct Ray raycastRay;
     struct Vector3 playerUp;
-    raycastRay.origin = scene->player.body.transform.position;
+    raycastRay.origin = scene->player.lookTransform.position;
     vector3Negate(&gForward, &raycastRay.dir);
-    quatMultVector(&scene->player.body.transform.rotation, &raycastRay.dir, &raycastRay.dir);
-    quatMultVector(&scene->player.body.transform.rotation, &gUp, &playerUp);
+    quatMultVector(&scene->player.lookTransform.rotation, &raycastRay.dir, &raycastRay.dir);
+    quatMultVector(&scene->player.lookTransform.rotation, &gUp, &playerUp);
 
     if (controllerGetButtonDown(0, Z_TRIG)) {
-        sceneFirePortal(scene, &raycastRay, &playerUp, 0);
+        sceneFirePortal(scene, &raycastRay, &playerUp, 0, scene->player.body.currentRoom);
+        soundPlayerPlay(soundsPortalgunShoot[0], 1.0f, 1.0f, NULL);
     }
 
-    if (controllerGetButtonDown(0, R_TRIG)) {
-        sceneFirePortal(scene, &raycastRay, &playerUp, 1);
+    if (controllerGetButtonDown(0, R_TRIG | L_TRIG)) {
+        sceneFirePortal(scene, &raycastRay, &playerUp, 1, scene->player.body.currentRoom);
+        soundPlayerPlay(soundsPortalgunShoot[1], 1.0f, 1.0f, NULL);
+    }
+
+    if (scene->player.body.flags & RigidBodyFizzled) {
+        sceneClosePortal(scene, 0);
+        sceneClosePortal(scene, 1);
+        scene->player.body.flags &= ~RigidBodyFizzled;
+    }
+
+    int isOpen = collisionSceneIsPortalOpen();
+
+    portalUpdate(&scene->portals[0], isOpen);
+    portalUpdate(&scene->portals[1], isOpen);
+
+    portalCheckForHoles(scene->portals);
+}
+
+void sceneUpdatePortalListener(struct Scene* scene, int portalIndex, int listenerIndex) {
+    struct Transform otherInverse;
+    transformInvert(&scene->portals[1 - portalIndex].transform, &otherInverse);
+    struct Transform portalCombined;
+    transformConcat(&scene->portals[portalIndex].transform, &otherInverse, &portalCombined);
+
+    struct Transform relativeTransform;
+    transformConcat(&portalCombined, &scene->player.lookTransform, &relativeTransform);
+
+    soundListenerUpdate(&relativeTransform.position, &relativeTransform.rotation, listenerIndex);
+}
+
+void sceneUpdateListeners(struct Scene* scene) {
+    soundListenerUpdate(&scene->player.lookTransform.position, &scene->player.lookTransform.rotation, 0);
+
+    if (collisionSceneIsPortalOpen()) {
+        soundListenerSetCount(3);
+        sceneUpdatePortalListener(scene, 0, 1);
+        sceneUpdatePortalListener(scene, 1, 2);
+    } else {
+        soundListenerSetCount(1);
     }
 }
 
@@ -160,21 +246,77 @@ void sceneUpdate(struct Scene* scene) {
     OSTime frameStart = osGetTime();
     scene->lastFrameTime = frameStart - scene->lastFrameStart;
 
-    playerUpdate(&scene->player, &scene->camera.transform);
-    sceneCheckPortals(scene);
+    signalsReset();
 
-    cubeUpdate(&scene->cube);
+    playerUpdate(&scene->player, &scene->camera.transform);
+    sceneUpdateListeners(scene);
+    sceneCheckPortals(scene);
+    
+    for (int i = 0; i < scene->buttonCount; ++i) {
+        buttonUpdate(&scene->buttons[i]);
+    }
+
+    for (int i = 0; i < scene->doorCount; ++i) {
+        doorUpdate(&scene->doors[i]);
+    }
+
+    for (int i = 0; i < scene->decorCount; ++i) {
+        decorObjectUpdate(scene->decor[i]);
+    }
+
+    for (int i = 0; i < scene->fizzlerCount; ++i) {
+        fizzlerUpdate(&scene->fizzlers[i]);
+    }
+    
+    for (int i = 0; i < scene->elevatorCount; ++i) {
+        elevatorUpdate(&scene->elevators[i], &scene->player);
+    }
     
     collisionSceneUpdateDynamics();
+
+    levelCheckTriggers(&scene->player.lookTransform.position);
+    cutscenesUpdate();
 
     scene->cpuTime = osGetTime() - frameStart;
     scene->lastFrameStart = frameStart;
 }
 
-int sceneFirePortal(struct Scene* scene, struct Ray* ray, struct Vector3* playerUp, int portalIndex) {
+int sceneOpenPortal(struct Scene* scene, struct Transform* at, int portalIndex, int quadIndex, int roomIndex) {
+    struct PortalSurfaceMappingRange surfaceMapping = gCurrentLevel->portalSurfaceMappingRange[quadIndex];
+
+    for (int indexIndex = surfaceMapping.minPortalIndex; indexIndex < surfaceMapping.maxPortalIndex; ++indexIndex) {
+        int surfaceIndex = gCurrentLevel->portalSurfaceMappingIndices[indexIndex];
+
+        struct PortalSurface* existingSurface = portalSurfaceGetOriginalSurface(surfaceIndex, portalIndex);
+
+        struct Portal* portal = &scene->portals[portalIndex];
+
+        if (portalAttachToSurface(portal, existingSurface, surfaceIndex, at)) {
+            soundPlayerPlay(soundsPortalOpen2, 1.0f, 1.0f, &at->position);
+            
+            portal->transform = *at;
+            portal->roomIndex = roomIndex;
+            portal->scale = 0.0f;
+            gCollisionScene.portalTransforms[portalIndex] = &portal->transform;
+            gCollisionScene.portalRooms[portalIndex] = roomIndex;
+
+            if (collisionSceneIsPortalOpen()) {
+                // the second portal is fully transparent right away
+                portal->opacity = 0.0f;
+            }
+
+            contactSolverCheckPortalContacts(&gContactSolver, &gCurrentLevel->collisionQuads[quadIndex]);
+            return 1;
+        }
+    }
+
+    return 0;
+}
+
+int sceneFirePortal(struct Scene* scene, struct Ray* ray, struct Vector3* playerUp, int portalIndex, int roomIndex) {
     struct RaycastHit hit;
 
-    if (!collisionSceneRaycast(&gCollisionScene, ray, 1000000.0f, 0, &hit)) {
+    if (!collisionSceneRaycast(&gCollisionScene, roomIndex, ray, COLLISION_LAYERS_STATIC | COLLISION_LAYERS_BLOCK_PORTAL, 1000000.0f, 0, &hit)) {
         return 0;
     }
 
@@ -200,24 +342,14 @@ int sceneFirePortal(struct Scene* scene, struct Ray* ray, struct Vector3* player
         quatLook(&hitDirection, playerUp, &portalLocation.rotation);
     }
 
-    return sceneOpenPortal(scene, &portalLocation, portalIndex, quadIndex);
+    return sceneOpenPortal(scene, &portalLocation, portalIndex, quadIndex, hit.roomIndex);
 }
 
-int sceneOpenPortal(struct Scene* scene, struct Transform* at, int portalIndex, int quadIndex) {
-    struct PortalSurfaceMapping surfaceMapping = gCurrentLevel->portalSurfaceMapping[quadIndex];
-
-    for (int i = surfaceMapping.minPortalIndex; i < surfaceMapping.maxPortalIndex; ++i) {
-        if (portalSurfaceGenerate(&gCurrentLevel->portalSurfaces[i], at, NULL, NULL)) {
-            struct Vector3 portalForward;
-            quatMultVector(&at->rotation, &gForward, &portalForward);
-            // TODO remove once there is a hole in the wall
-            vector3AddScaled(&at->position, &portalForward, (portalIndex == 0) ? -0.1f : 0.1f, &at->position);
-            
-            scene->portals[portalIndex].transform = *at;
-            gCollisionScene.portalTransforms[portalIndex] = &scene->portals[portalIndex].transform;
-            return 1;
-        }
+void sceneClosePortal(struct Scene* scene, int portalIndex) {
+    if (gCollisionScene.portalTransforms[portalIndex]) {
+        soundPlayerPlay(soundsPortalFizzle, 1.0f, 1.0f, &gCollisionScene.portalTransforms[portalIndex]->position);
+        gCollisionScene.portalTransforms[portalIndex] = NULL;
+        scene->portals[portalIndex].flags |= PortalFlagsNeedsNewHole;
+        scene->portals[portalIndex].portalSurfaceIndex = -1;
     }
-
-    return 0;
 }

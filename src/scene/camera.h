@@ -8,12 +8,10 @@
 #include "math/transform.h"
 #include "math/plane.h"
 #include "graphics/renderstate.h"
+#include "../physics/collision_quad.h"
+#include "../math/boxs16.h"
 
-#define CLIPPING_PLANE_COUNT    5
-
-struct FrustrumCullingInformation {
-    struct Plane clippingPlanes[CLIPPING_PLANE_COUNT];
-};
+#define MAX_CLIPPING_PLANE_COUNT    6
 
 struct Camera {
     struct Transform transform;
@@ -21,6 +19,17 @@ struct Camera {
     float farPlane;
     float fov;
 };
+
+struct FrustrumCullingInformation {
+    struct Plane clippingPlanes[MAX_CLIPPING_PLANE_COUNT];
+    short usedClippingPlaneCount;
+
+    struct Vector3 cameraPos;
+};
+
+int isOutsideFrustrum(struct FrustrumCullingInformation* frustrum, struct BoundingBoxs16* boundingBox);
+int isSphereOutsideFrustrum(struct FrustrumCullingInformation* frustrum, struct Vector3* scaledCenter, float scaledRadius);
+int isQuadOutsideFrustrum(struct FrustrumCullingInformation* frustrum, struct CollisionQuad* quad);
 
 void cameraInit(struct Camera* camera, float fov, float near, float far);
 void cameraBuildViewMatrix(struct Camera* camera, float matrix[4][4]);

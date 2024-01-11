@@ -4,8 +4,133 @@
 #include "math/mathf.h"
 #include "math/vector2.h"
 #include <math.h>
+#include "portal_surface_generator.h"
+#include "../levels/level_definition.h"
+#include "../levels/levels.h"
+#include "../util/memory.h"
 
-#define NO_OVERLAP  0x10000
+#define MAX_PENDING_PORTAL_CLEANUP  4
+
+#define PORTAL_HOLE_SCALE_X  0.945f
+#define PORTAL_HOLE_SCALE_Y  0.795f
+
+struct Vector3 gPortalOutlineWorld[PORTAL_LOOP_SIZE] = {
+    {-0.353553f * PORTAL_HOLE_SCALE_X, 0.707107f * PORTAL_HOLE_SCALE_Y, 0.0f},
+    {-0.5f * PORTAL_HOLE_SCALE_X, 0.0f, 0.0f},
+    {-0.353553f * PORTAL_HOLE_SCALE_X, -0.707107f * PORTAL_HOLE_SCALE_Y, 0.0f},
+    {0.0f, -1.0f * PORTAL_HOLE_SCALE_Y, 0.0f},
+    {0.353553f * PORTAL_HOLE_SCALE_X, -0.707107f * PORTAL_HOLE_SCALE_Y, 0.0f},
+    {0.5f * PORTAL_HOLE_SCALE_X, 0.0f, 0.0f},
+    {0.353553f * PORTAL_HOLE_SCALE_X, 0.707107f * PORTAL_HOLE_SCALE_Y, 0.0f},
+    {0.0f, 1.0f * PORTAL_HOLE_SCALE_Y, 0.0f},
+};
+
+struct PortalSurface gPortalSurfaceCleanupQueue[MAX_PENDING_PORTAL_CLEANUP];
+int gPortalSurfaceNextToWrite;
+
+void portalSurfaceCheckCleanupQueue() {
+    for (int searchIterator = 0; searchIterator < MAX_PENDING_PORTAL_CLEANUP; ++searchIterator) {
+        struct PortalSurface* surface = &gPortalSurfaceCleanupQueue[searchIterator];
+
+        if (surface->shouldCleanup == 1) {
+            surface->shouldCleanup = 0;
+
+            free(surface->vertices);
+            free(surface->edges);
+            free(surface->gfxVertices);
+            free(surface->triangles);
+        } else if (surface->shouldCleanup) {
+            --surface->shouldCleanup;
+        }
+    }
+}
+
+struct PortalSurfaceReplacement gPortalSurfaceReplacements[2];
+
+int portalSurfaceAreBothOnSameSurface() {
+    return (gPortalSurfaceReplacements[0].flags & PortalSurfaceReplacementFlagsIsEnabled) != 0 &&
+        (gPortalSurfaceReplacements[1].flags & PortalSurfaceReplacementFlagsIsEnabled) != 0 &&
+        gPortalSurfaceReplacements[0].portalSurfaceIndex == gPortalSurfaceReplacements[1].portalSurfaceIndex;
+}
+
+int portalSurfaceShouldSwapOrder(int portalToMove) {
+    if (!portalSurfaceAreBothOnSameSurface()) {
+        return 0;
+    }
+
+    return gPortalSurfaceReplacements[1 - portalToMove].previousSurface.shouldCleanup;
+}
+
+void portalSurfaceReplacementRevert(struct PortalSurfaceReplacement* replacement) {
+    if (!(replacement->flags & PortalSurfaceReplacementFlagsIsEnabled)) {
+        return;
+    }
+
+    gCurrentLevel->staticContent[replacement->staticIndex].displayList = replacement->previousSurface.triangles;
+    portalSurfaceCleanup(&gCurrentLevel->portalSurfaces[replacement->portalSurfaceIndex]);
+    gCurrentLevel->portalSurfaces[replacement->portalSurfaceIndex] = replacement->previousSurface;
+    replacement->flags = 0;
+}
+
+void portalSurfacePreSwap(int portalToMove) {
+    portalSurfaceReplacementRevert(&gPortalSurfaceReplacements[1 - portalToMove]);
+    portalSurfaceReplacementRevert(&gPortalSurfaceReplacements[portalToMove]);
+}
+
+int portalSurfaceStaticIndexForReplacement(int portalIndex) {
+    return gPortalSurfaceReplacements[portalIndex].staticIndex;
+}
+
+struct PortalSurface* portalSurfaceGetOriginalSurface(int portalSurfaceIndex, int portalIndex) {
+    struct PortalSurfaceReplacement* replacement = &gPortalSurfaceReplacements[portalIndex];
+
+    // TODO swap portals if they are on the same surface
+    if ((replacement->flags & PortalSurfaceReplacementFlagsIsEnabled) != 0 && replacement->portalSurfaceIndex == portalSurfaceIndex) {
+        return &replacement->previousSurface;
+    } else {
+        return &gCurrentLevel->portalSurfaces[portalSurfaceIndex];
+    }
+}
+
+struct PortalSurface* portalSurfaceReplace(int portalSurfaceIndex, int roomIndex, int portalIndex, struct PortalSurface* with) {
+    int staticIndex = -1;
+
+    struct PortalSurfaceReplacement* replacement = &gPortalSurfaceReplacements[portalIndex];
+
+    if (replacement->flags & PortalSurfaceReplacementFlagsIsEnabled) {
+        portalSurfaceReplacementRevert(replacement);
+    }
+
+    struct Rangeu16 range = gCurrentLevel->roomStaticMapping[roomIndex];
+
+    struct PortalSurface* existing = &gCurrentLevel->portalSurfaces[portalSurfaceIndex];
+
+    for (staticIndex = range.min; staticIndex < (int)range.max; ++staticIndex) {
+        if (gCurrentLevel->staticContent[staticIndex].displayList == existing->triangles) {
+            break;
+        }
+    }
+
+    if (staticIndex == range.max) {
+        portalSurfaceCleanup(with);
+        return NULL;
+    }
+
+    replacement->previousSurface = *existing;
+    replacement->flags = PortalSurfaceReplacementFlagsIsEnabled;
+    replacement->staticIndex = staticIndex;
+    replacement->portalSurfaceIndex = portalSurfaceIndex;
+    replacement->roomIndex = roomIndex;
+
+    gCurrentLevel->staticContent[staticIndex].displayList = with->triangles;
+    gCurrentLevel->portalSurfaces[portalSurfaceIndex] = *with;
+
+    return &gCurrentLevel->portalSurfaces[portalSurfaceIndex];
+}
+
+void portalSurfaceRevert(int portalIndex) {
+    portalSurfaceReplacementRevert(&gPortalSurfaceReplacements[portalIndex]);
+}
 
 void portalSurface2DPoint(struct PortalSurface* surface, struct Vector3* at, struct Vector2s16* output) {
     struct Vector3 offset;
@@ -25,8 +150,14 @@ int portalSurfaceIsInside(struct PortalSurface* surface, struct Transform* porta
     struct Vector2s16 portalPosition;
     portalSurface2DPoint(surface, &portalAt->position, &portalPosition);
 
-    for (int i = 0; i < surface->sideCount; ++i) {
+    for (int i = 0; i < surface->edgeCount; ++i) {
         struct SurfaceEdge* edge = &surface->edges[i];
+
+        // only check edges that are one sided
+        if (edge->nextEdgeReverse != NO_EDGE_CONNECTION) {
+            continue;
+        }
+
         struct Vector2s16 a = surface->vertices[edge->aIndex];
         struct Vector2s16 b = surface->vertices[edge->bIndex];
 
@@ -61,133 +192,150 @@ int portalSurfaceIsInside(struct PortalSurface* surface, struct Transform* porta
     return intersectionCount % 2;
 }
 
-void portalSurfaceAdjustPosition(struct PortalSurface* surface, struct Transform* portalAt, struct Vector2s16* output, struct Vector2s16* outlineLoopOutput) {
+#define MAX_POS_ADJUST_ITERATIONS   3
+
+#define PORTAL_EDGE_PADDING         3
+
+int portalSurfaceAdjustPosition(struct PortalSurface* surface, struct Transform* portalAt, struct Vector2s16* output, struct Vector2s16* outlineLoopOutput) {
     struct Vector2s16 minPortal;
     struct Vector2s16 maxPortal;
 
     portalSurface2DPoint(surface, &portalAt->position, output);
 
+    struct Vector3 portalNormal;
+    quatMultVector(&portalAt->rotation, &gForward, &portalNormal);
+
+    struct Vector3 surfaceNormal;
+    vector3Cross(&surface->right, &surface->up, &surfaceNormal);
+
+    int shouldReverse = vector3Dot(&portalNormal, &surfaceNormal) > 0.0f;
+
+    struct Vector2s16 startingPoint = *output;
+
     minPortal = *output;
     maxPortal = *output;
 
-    for (int i = 0; i < PORTAL_LOOP_SIZE; ++i) {
-        struct Vector2s16 cornerPoint;
+    for (int i = 0; i < PORTAL_LOOP_SIZE; ++i) {        
         struct Vector3 transformedPoint;
-        transformPoint(portalAt, &gPortalOutlineUnscaled[i], &transformedPoint);
-        portalSurface2DPoint(surface, &transformedPoint, &cornerPoint);
+        transformPoint(portalAt, &gPortalOutlineWorld[shouldReverse ? (PORTAL_LOOP_SIZE - 1) - i : i], &transformedPoint);
+        portalSurface2DPoint(surface, &transformedPoint, &outlineLoopOutput[i]);
 
-        minPortal.x = MIN(minPortal.x, cornerPoint.x);
-        minPortal.y = MIN(minPortal.y, cornerPoint.y);
+        minPortal.x = MIN(minPortal.x, outlineLoopOutput[i].x);
+        minPortal.y = MIN(minPortal.y, outlineLoopOutput[i].y);
 
-        maxPortal.x = MAX(maxPortal.x, cornerPoint.x);
-        maxPortal.y = MAX(maxPortal.y, cornerPoint.y);
+        maxPortal.x = MAX(maxPortal.x, outlineLoopOutput[i].x);
+        maxPortal.y = MAX(maxPortal.y, outlineLoopOutput[i].y);
     }
 
 
     struct Vector2s16 halfSize;
-    halfSize.x = (maxPortal.x - minPortal.x) >> 1;
-    halfSize.y = (maxPortal.y - minPortal.y) >> 1;
+    halfSize.x = ((maxPortal.x - minPortal.x) >> 1) + PORTAL_EDGE_PADDING * 2;
+    halfSize.y = ((maxPortal.y - minPortal.y) >> 1) + PORTAL_EDGE_PADDING * 2;
 
-    for (int interation = 0; interation < 2; ++interation) {
-        int minOverlap = NO_OVERLAP;
+    int iteration = 0;
+
+    for (iteration = 0; iteration < MAX_POS_ADJUST_ITERATIONS; ++iteration) {
+        int minOverlap = PORTAL_SURFACE_OVERLAP;
         struct Vector2s16 minOverlapOffset;
 
-        for (int i = 0; i < surface->sideCount; ++i) {
+        struct Vector2s16 portalMin;
+        portalMin.x = output->x - halfSize.x;
+        portalMin.y = output->y - halfSize.y;
+        struct Vector2s16 portalMax;
+        portalMax.x = output->x + halfSize.x;
+        portalMax.y = output->y + halfSize.y;
+
+        for (int i = 0; i < surface->edgeCount; ++i) {
             struct SurfaceEdge* edge = &surface->edges[i];
-            struct Vector2s16 a = surface->vertices[edge->aIndex];
 
-            int offsetX = output->x - a.x;
-            int offsetY = output->y - a.y;
-
-            int xOverlap = halfSize.x - abs(offsetX);
-            int yOverlap = halfSize.y - abs(offsetY);
-
-            // check if vertex is inside portal BB
-            if (xOverlap > 0 && yOverlap > 0) {
-                if (xOverlap < yOverlap) {
-                    if (xOverlap < minOverlap) {
-                        minOverlap = xOverlap;
-                        minOverlapOffset.x = xOverlap * sign(offsetX);
-                        minOverlapOffset.y = 0;
-                    }
-                } else {
-                    if (yOverlap < minOverlap) {
-                        minOverlap = yOverlap;
-                        minOverlapOffset.x = 0;
-                        minOverlapOffset.y = yOverlap * sign(offsetY);
-                    }
-                }
-
+            // only check edges that are one sided
+            if (edge->nextEdgeReverse != NO_EDGE_CONNECTION) {
                 continue;
             }
 
-            // check if line intersects portal BB
-
+            struct Vector2s16 a = surface->vertices[edge->aIndex];
             struct Vector2s16 b = surface->vertices[edge->bIndex];
 
+            struct Vector2s16 edgeMin;
+            edgeMin.x = MIN(a.x, b.x);
+            edgeMin.y = MIN(a.y, b.y);
+
+            struct Vector2s16 edgeMax;
+            edgeMax.x = MAX(a.x, b.x);
+            edgeMax.y = MAX(a.y, b.y);
+
+            // the line bounding box doesn't intersect the portal bounding box
+            if (portalMax.x <= edgeMin.x || portalMin.x >= edgeMax.x ||
+                portalMax.y <= edgeMin.y || portalMin.y >= edgeMax.y) {
+                continue;
+            }
+
             struct Vector2s16 offset;
-            offset.x = b.x - a.x;
-            offset.y = b.y - a.y;
+            int distance = portalMax.x - edgeMin.x;
+            offset.x = -distance;
+            offset.y = 0;
 
-            int lineAxis;
-            int crossAxis;
-            int crossDirection;
+            int distanceCheck = edgeMax.x - portalMin.x;
 
-            if (abs(offset.x) > abs(offset.y)) {
-                lineAxis = 0;
-                crossAxis = 1;
-                crossDirection = -sign(offset.x);
-            } else {
-                lineAxis = 1;
-                crossAxis = 0;
-                crossDirection = sign(offset.y);
+            if (distanceCheck < distance) {
+                distance = distanceCheck;
+                offset.x = distance;
+                offset.y = 0;
             }
 
-            int portalPosLineAxis = VECTOR2s16_AS_ARRAY(output)[lineAxis];
+            distanceCheck = portalMax.y - edgeMin.y;
 
-            // check line endpoints relative to the portal position
-            if ((VECTOR2s16_AS_ARRAY(&a)[lineAxis] - portalPosLineAxis) * (VECTOR2s16_AS_ARRAY(&b)[lineAxis] - portalPosLineAxis) >= 0) {
-                continue;
+            if (distanceCheck < distance) {
+                distance = distanceCheck;
+                offset.x = 0;
+                offset.y = -distance;
             }
 
-            int boxPosition = VECTOR2s16_AS_ARRAY(output)[crossAxis] + crossDirection * VECTOR2s16_AS_ARRAY(&halfSize)[crossAxis];
-            int distance = (boxPosition - VECTOR2s16_AS_ARRAY(&a)[crossAxis]) * crossDirection;
+            distanceCheck = edgeMax.y - portalMin.y;
 
-            if (distance <= 0 && distance < VECTOR2s16_AS_ARRAY(&halfSize)[crossAxis]) {
-                continue;
+            if (distanceCheck < distance) {
+                distance = distanceCheck;
+                offset.x = 0;
+                offset.y = distance;
             }
 
             if (distance < minOverlap) {
                 minOverlap = distance;
-                VECTOR2s16_AS_ARRAY(&minOverlapOffset)[lineAxis] = 0;
-                VECTOR2s16_AS_ARRAY(&minOverlapOffset)[crossAxis] = -distance * crossDirection;
+                minOverlapOffset = offset;
             }
         }
 
-        if (minOverlap == NO_OVERLAP) {
+        if (minOverlap == PORTAL_SURFACE_OVERLAP) {
             break;
         }
 
         output->x += minOverlapOffset.x;
         output->y += minOverlapOffset.y;        
     }
+
+    // if the output position moved then adjust the loop
+    if (startingPoint.equalTest != output->equalTest) {
+        struct Vector2s16 offset;
+        vector2s16Sub(output, &startingPoint, &offset);
+
+        for (int i = 0; i < PORTAL_LOOP_SIZE; ++i) {
+            vector2s16Add(&outlineLoopOutput[i], &offset, &outlineLoopOutput[i]);
+        }
+    }
+
+    // running out of iterations is a sign there isn't enough
+    // room for the portal
+    return iteration != MAX_POS_ADJUST_ITERATIONS;
 }
 
-int portalSurfaceGenerate(struct PortalSurface* surface, struct Transform* portalAt, Vtx* vertices, Gfx* triangles) {
-    // determine if portal is on surface
-    if (!portalSurfaceIsInside(surface, portalAt)) {
-        return 0;
+void portalSurfaceCleanup(struct PortalSurface* portalSurface) {
+    if (!portalSurface->shouldCleanup) {
+        return;
     }
-    // find all portal edge intersections
-    struct Vector2s16 correctPosition;
-    struct Vector2s16 portalOutline[PORTAL_LOOP_SIZE];
-    portalSurfaceAdjustPosition(surface, portalAt, &correctPosition, portalOutline);
 
-    portalSurfaceInverse(surface, &correctPosition, &portalAt->position);
-    // TODO
-    // loop through all triangles
-    // if no interesctions on triangle pass it through
-    // if triangle intersects portal then retrianglute face
+    gPortalSurfaceCleanupQueue[gPortalSurfaceNextToWrite] = *portalSurface;
+    gPortalSurfaceCleanupQueue[gPortalSurfaceNextToWrite].shouldCleanup = 2;
+    gPortalSurfaceNextToWrite = (gPortalSurfaceNextToWrite + 1) % MAX_PENDING_PORTAL_CLEANUP;
 
-    return 1;
+    portalSurface->shouldCleanup = 0;
 }

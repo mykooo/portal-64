@@ -18,6 +18,18 @@ void rigidBodyInit(struct RigidBody* rigidBody, float mass, float momentOfIniter
     rigidBody->momentOfInertiaInv = 1.0f / rigidBody->momentOfInertia;
 
     rigidBody->flags = 0;
+
+    rigidBody->currentRoom = 0;
+
+    basisFromQuat(&rigidBody->rotationBasis, &rigidBody->transform.rotation);
+}
+
+void rigidBodyMarkKinematic(struct RigidBody* rigidBody) {
+    rigidBody->flags |= RigidBodyIsKinematic;
+    rigidBody->mass = 1000000000000000.0f;
+    rigidBody->massInv = 0.0f;
+    rigidBody->momentOfInertia = 1000000000000000.0f;
+    rigidBody->momentOfInertiaInv = 0.0f;
 }
 
 void rigidBodyAppyImpulse(struct RigidBody* rigidBody, struct Vector3* worldPoint, struct Vector3* impulse) {
@@ -34,7 +46,9 @@ void rigidBodyAppyImpulse(struct RigidBody* rigidBody, struct Vector3* worldPoin
 #define ENERGY_SCALE_PER_STEP   0.99f
 
 void rigidBodyUpdate(struct RigidBody* rigidBody) {
-    rigidBody->velocity.y += GRAVITY_CONSTANT * FIXED_DELTA_TIME;
+    if (!(rigidBody->flags & RigidBodyDisableGravity)) {
+        rigidBody->velocity.y += GRAVITY_CONSTANT * FIXED_DELTA_TIME;
+    }
 
     vector3AddScaled(&rigidBody->transform.position, &rigidBody->velocity, FIXED_DELTA_TIME, &rigidBody->transform.position);
     quatApplyAngularVelocity(&rigidBody->transform.rotation, &rigidBody->angularVelocity, FIXED_DELTA_TIME, &rigidBody->transform.rotation);
@@ -62,11 +76,11 @@ float rigidBodyMassInverseAtLocalPoint(struct RigidBody* rigidBody, struct Vecto
 }
 
 
-void rigidBodyCheckPortals(struct RigidBody* rigidBody) {
+int rigidBodyCheckPortals(struct RigidBody* rigidBody) {
     if (!gCollisionScene.portalTransforms[0] || !gCollisionScene.portalTransforms[1]) {
         rigidBody->flags &= ~(RigidBodyFlagsInFrontPortal0 | RigidBodyFlagsInFrontPortal1);
         rigidBody->flags |= RigidBodyFlagsPortalsInactive;
-        return;
+        return 0;
     }
 
     struct Vector3 localPoint;
@@ -77,8 +91,10 @@ void rigidBodyCheckPortals(struct RigidBody* rigidBody) {
         newFlags |= RigidBodyWasTouchingPortal;
     }
 
+    int result = 0;
+
     for (int i = 0; i < 2; ++i) {
-        transformPointInverse(gCollisionScene.portalTransforms[i], &rigidBody->transform.position, &localPoint);
+        transformPointInverseNoScale(gCollisionScene.portalTransforms[i], &rigidBody->transform.position, &localPoint);
 
         int mask = (1 << i);
 
@@ -121,25 +137,10 @@ void rigidBodyCheckPortals(struct RigidBody* rigidBody) {
         }
 
         struct Transform* otherPortal = gCollisionScene.portalTransforms[1 - i];
-
-        transformPoint(otherPortal, &localPoint, &rigidBody->transform.position);
-
-        struct Quaternion inverseARotation;
-        quatConjugate(&gCollisionScene.portalTransforms[i]->rotation, &inverseARotation);
-
-        struct Quaternion rotationTransfer;
-        quatMultiply(&otherPortal->rotation, &inverseARotation, &rotationTransfer);
-
-        quatMultVector(&rotationTransfer, &rigidBody->velocity, &rigidBody->velocity);
-        quatMultVector(&rotationTransfer, &rigidBody->angularVelocity, &rigidBody->angularVelocity);
-
-        struct Quaternion newRotation;
-
-        quatMultiply(&rotationTransfer, &rigidBody->transform.rotation, &newRotation);
-
-        rigidBody->transform.rotation = newRotation;
+        rigidBodyTeleport(rigidBody, gCollisionScene.portalTransforms[i], otherPortal, gCollisionScene.portalRooms[1 - i]);
 
         newFlags |= RigidBodyFlagsCrossedPortal0 << i;
+        result = i + 1;
     }
 
     rigidBody->flags &= ~(
@@ -152,4 +153,31 @@ void rigidBodyCheckPortals(struct RigidBody* rigidBody) {
         RigidBodyWasTouchingPortal
     );
     rigidBody->flags |= newFlags;
+
+    return result;
+}
+
+void rigidBodyTeleport(struct RigidBody* rigidBody, struct Transform* from, struct Transform* to, int toRoom) {
+    struct Vector3 localPoint;
+
+    transformPointInverseNoScale(from, &rigidBody->transform.position, &localPoint);
+
+    transformPoint(to, &localPoint, &rigidBody->transform.position);
+
+    struct Quaternion inverseARotation;
+    quatConjugate(&from->rotation, &inverseARotation);
+
+    struct Quaternion rotationTransfer;
+    quatMultiply(&to->rotation, &inverseARotation, &rotationTransfer);
+
+    quatMultVector(&rotationTransfer, &rigidBody->velocity, &rigidBody->velocity);
+    quatMultVector(&rotationTransfer, &rigidBody->angularVelocity, &rigidBody->angularVelocity);
+
+    struct Quaternion newRotation;
+
+    quatMultiply(&rotationTransfer, &rigidBody->transform.rotation, &newRotation);
+
+    rigidBody->transform.rotation = newRotation;
+
+    rigidBody->currentRoom = toRoom;
 }

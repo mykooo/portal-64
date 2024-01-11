@@ -4,11 +4,10 @@
 #include "level_definition.h"
 #include "graphics/renderstate.h"
 #include "scene/camera.h"
+#include "../scene/dynamic_scene.h"
 
-void staticRenderInit();
-
-void staticRender(struct FrustrumCullingInformation* cullingInfo, struct RenderState* renderState);
-
-int isOutsideFrustrum(struct FrustrumCullingInformation* frustrum, struct BoundingBoxs16* boundingBox);
+void staticRenderDetermineVisibleRooms(struct FrustrumCullingInformation* cullingInfo, u16 currentRoom, u64* visitedRooms);
+int staticRenderIsRoomVisible(u64 visibleRooms, u16 roomIndex);
+void staticRender(struct Transform* cameraTransform, struct FrustrumCullingInformation* cullingInfo, u64 visibleRooms, struct RenderState* renderState);
 
 #endif

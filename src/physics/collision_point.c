@@ -5,9 +5,9 @@
 #include "../math/transform.h"
 #include "../math/mathf.h"
 
-int collisionBoxCollidePoint(void* data, struct Transform* boxTransform, struct Vector3* point, struct ContactConstraintState* output) {
+int collisionBoxCollidePoint(void* data, struct Transform* boxTransform, struct Vector3* point, struct ContactManifold* output) {
     struct Vector3 localSpace;
-    transformPointInverse(boxTransform, point, &localSpace);
+    transformPointInverseNoScale(boxTransform, point, &localSpace);
 
     struct Vector3 absLocalspace;
     vector3Abs(&localSpace, &absLocalspace);

@@ -1,60 +1,113 @@
 
 #include "player.h"
+#include "../audio/clips.h"
+#include "../audio/soundplayer.h"
 #include "../controls/controller.h"
-#include "../util/time.h"
 #include "../defs.h"
-#include "../physics/point_constraint.h"
+#include "../levels/levels.h"
 #include "../math/mathf.h"
-#include "physics/collision_sphere.h"
-#include "physics/collision_scene.h"
-#include "physics/config.h"
+#include "../physics/collision_cylinder.h"
+#include "../physics/collision_scene.h"
+#include "../physics/collision.h"
+#include "../physics/config.h"
+#include "../physics/point_constraint.h"
+#include "../util/time.h"
+#include "../physics/contact_insertion.h"
 
-#define GRAB_RAYCAST_DISTANCE   3.5f
+#define GRAB_RAYCAST_DISTANCE   2.5f
 
-struct Vector3 gGrabDistance = {0.0f, 0.0f, -2.5f};
+#define PLAYER_COLLISION_LAYERS (COLLISION_LAYERS_TANGIBLE | COLLISION_LAYERS_FIZZLER)
+
+struct Vector3 gGrabDistance = {0.0f, 0.0f, -1.5f};
 struct Vector3 gCameraOffset = {0.0f, 0.0f, 0.0f};
 
-struct CollisionSphere gPlayerCollider = {
+struct Vector2 gPlayerColliderEdgeVectors[] = {
+    {0.0f, 1.0f},
+    {0.707f, 0.707f},
+    {1.0f, 0.0f},
+    {0.707f, -0.707f},
+};
+
+struct CollisionQuad gPlayerColliderFaces[8];
+
+struct CollisionCylinder gPlayerCollider = {
     0.25f,
+    0.5f,
+    gPlayerColliderEdgeVectors,
+    sizeof(gPlayerColliderEdgeVectors) / sizeof(*gPlayerColliderEdgeVectors),
+    gPlayerColliderFaces,
 };
 
 struct ColliderTypeData gPlayerColliderData = {
-    CollisionShapeTypeSphere,
+    CollisionShapeTypeCylinder,
     &gPlayerCollider,
-    0.1f,
-    0.5f,
-    &gCollisionSphereCallbacks,
+    0.0f,
+    0.6f,
+    &gCollisionCylinderCallbacks,
 };
 
-void playerInit(struct Player* player) {
-    collisionObjectInit(&player->collisionObject, &gPlayerColliderData, &player->body, 1.0f);
+void playerInit(struct Player* player, struct Location* startLocation) {
+    collisionObjectInit(&player->collisionObject, &gPlayerColliderData, &player->body, 1.0f, PLAYER_COLLISION_LAYERS);
+    rigidBodyMarkKinematic(&player->body);
+    player->body.flags |= RigidBodyGenerateContacts;
+    collisionSceneAddDynamicObject(&player->collisionObject);
+
     player->grabbingThroughPortal = PLAYER_GRABBING_THROUGH_NOTHING;
     player->grabbing = NULL;
     player->pitchVelocity = 0.0f;
     player->yawVelocity = 0.0f;
     player->flags = 0;
+
+    if (startLocation) {
+        player->lookTransform = startLocation->transform;
+        player->body.currentRoom = startLocation->roomIndex;
+    } else {
+        transformInitIdentity(&player->lookTransform);
+        player->body.currentRoom = 0;
+    }
+    player->lookTransform.position.y += PLAYER_HEAD_HEIGHT;
+    player->body.transform = player->lookTransform;
+
+    collisionObjectUpdateBB(&player->collisionObject);
 }
 
-#define PLAYER_SPEED    (5.0f)
-#define PLAYER_ACCEL    (40.0f)
+#define PLAYER_SPEED    (3.0f)
+#define PLAYER_ACCEL    (30.0f)
 #define PLAYER_STOP_ACCEL    (80.0f)
 
 #define ROTATE_RATE     (M_PI * 2.0f)
-#define ROTATE_RATE_DELTA     (M_PI * 0.25f)
+#define ROTATE_RATE_DELTA     (M_PI * 0.125f)
 #define ROTATE_RATE_STOP_DELTA (M_PI * 0.25f)
 
 #define JUMP_IMPULSE   3.2f
 
-void playerHandleCollision(void* data, struct ContactConstraintState* contact) {
-    struct Player* player = (struct Player*)data;
+void playerHandleCollision(struct Player* player) {
+    struct ContactManifold* contact = contactSolverNextManifold(&gContactSolver, &player->collisionObject, NULL);
 
-    if (contact->contactCount == 1 && contact->contacts[0].penetration < 0.0f) {
-        vector3AddScaled(
-            &player->body.transform.position, 
-            &contact->normal, 
-            -contact->contacts[0].penetration, 
-            &player->body.transform.position
-        );
+    while (contact) {
+        float offset = 0.0f;
+
+        for (int i = 0; i < contact->contactCount; ++i) {
+            struct ContactPoint* contactPoint = &contact->contacts[i];
+            offset = MIN(offset, contactPoint->penetration);
+        }
+        
+        if (offset != 0.0f) {
+            vector3AddScaled(
+                &player->body.transform.position, 
+                &contact->normal, 
+                (contact->shapeA == &player->collisionObject ? offset : -offset) * 0.95f, 
+                &player->body.transform.position
+            );
+
+            float relativeVelocity = vector3Dot(&contact->normal, &player->body.velocity);
+
+            if ((contact->shapeA == &player->collisionObject) == (relativeVelocity > 0.0f)) {
+                vector3ProjectPlane(&player->body.velocity, &contact->normal, &player->body.velocity);
+            }
+        }
+
+        contact = contactSolverNextManifold(&gContactSolver, &player->collisionObject, contact);
     }
 }
 
@@ -73,14 +126,16 @@ void playerUpdateGrabbedObject(struct Player* player) {
         } else {
             struct Ray ray;
 
-            ray.origin = player->body.transform.position;
-            quatMultVector(&player->body.transform.rotation, &gForward, &ray.dir);
+            ray.origin = player->lookTransform.position;
+            quatMultVector(&player->lookTransform.rotation, &gForward, &ray.dir);
             vector3Negate(&ray.dir, &ray.dir);
             
             struct RaycastHit hit;
 
-            if (collisionSceneRaycast(&gCollisionScene, &ray, GRAB_RAYCAST_DISTANCE, 1, &hit) && hit.object->body && (hit.object->body->flags & RigidBodyFlagsGrabbable)) {
-                player->grabbing = hit.object->body;
+            player->collisionObject.collisionLayers = 0;
+
+            if (collisionSceneRaycast(&gCollisionScene, player->body.currentRoom, &ray, COLLISION_LAYERS_GRABBABLE | COLLISION_LAYERS_TANGIBLE, GRAB_RAYCAST_DISTANCE, 1, &hit) && hit.object->body && (hit.object->body->flags & RigidBodyFlagsGrabbable)) {
+                player->grabbing = hit.object;
 
                 if (hit.throughPortal) {
                     player->grabbingThroughPortal = hit.throughPortal == gCollisionScene.portalTransforms[0] ? 0 : 1;
@@ -88,7 +143,13 @@ void playerUpdateGrabbedObject(struct Player* player) {
                     player->grabbingThroughPortal = PLAYER_GRABBING_THROUGH_NOTHING;
                 }
             }
+
+            player->collisionObject.collisionLayers = PLAYER_COLLISION_LAYERS;
         }
+    }
+
+    if (player->grabbing && (player->grabbing->body->flags & RigidBodyFlagsGrabbable) == 0) {
+        player->grabbing = NULL;
     }
 
     if (player->grabbing) {
@@ -100,18 +161,18 @@ void playerUpdateGrabbedObject(struct Player* player) {
             playerApplyPortalGrab(player, 0);
         }
 
-        if (player->grabbing->flags & RigidBodyFlagsCrossedPortal0) {
+        if (player->grabbing->body->flags & RigidBodyFlagsCrossedPortal0) {
             playerApplyPortalGrab(player, 0);
         }
 
-        if (player->grabbing->flags & RigidBodyFlagsCrossedPortal1) {
+        if (player->grabbing->body->flags & RigidBodyFlagsCrossedPortal1) {
             playerApplyPortalGrab(player, 1);
         }
 
         struct Vector3 grabPoint;
-        struct Quaternion grabRotation = player->body.transform.rotation;
+        struct Quaternion grabRotation = player->lookTransform.rotation;
 
-        transformPoint(&player->body.transform, &gGrabDistance, &grabPoint);
+        transformPoint(&player->lookTransform, &gGrabDistance, &grabPoint);
 
         if (player->grabbingThroughPortal != PLAYER_GRABBING_THROUGH_NOTHING) {
             if (!collisionSceneIsPortalOpen()) {
@@ -129,16 +190,37 @@ void playerUpdateGrabbedObject(struct Player* player) {
             grabRotation = finalRotation;
         }
 
-        pointConstraintMoveToPoint(player->grabbing, &grabPoint, 20.0f);
-        pointConstraintRotateTo(player->grabbing, &grabRotation, 5.0f);
+        pointConstraintMoveToPoint(player->grabbing, &grabPoint, 8.0f);
+        pointConstraintRotateTo(player->grabbing->body, &grabRotation, 5.0f);
     }
+}
+
+#define DEADZONE_SIZE       5
+#define MAX_JOYSTICK_RANGE  80
+
+float playerCleanupStickInput(s8 input) {
+    if (input > -DEADZONE_SIZE && input < DEADZONE_SIZE) {
+        return 0.0f;
+    }
+
+    if (input >= MAX_JOYSTICK_RANGE) {
+        return 1.0f;
+    }
+
+    if (input <= -MAX_JOYSTICK_RANGE) {
+        return -1.0f;
+    }
+
+    return ((float)input + (input > 0 ? -DEADZONE_SIZE : DEADZONE_SIZE)) * (1.0f / (MAX_JOYSTICK_RANGE - DEADZONE_SIZE));
 }
 
 void playerUpdate(struct Player* player, struct Transform* cameraTransform) {
     struct Vector3 forward;
     struct Vector3 right;
 
-    struct Transform* transform = &player->body.transform;
+    int doorwayMask = worldCheckDoorwaySides(&gCurrentLevel->world, &player->lookTransform.position, player->body.currentRoom);
+
+    struct Transform* transform = &player->lookTransform;
 
     quatMultVector(&transform->rotation, &gForward, &forward);
     quatMultVector(&transform->rotation, &gRight, &right);
@@ -161,13 +243,20 @@ void playerUpdate(struct Player* player, struct Transform* cameraTransform) {
         player->body.velocity.y = JUMP_IMPULSE;
     }
 
-    OSContPad* controllerInput = controllersGetControllerData(0);
+    struct Vector3 targetVelocity = gZeroVec;
 
-    struct Vector3 targetVelocity;
+    if (controllerGetButton(0, L_CBUTTONS | L_JPAD)) {
+        vector3AddScaled(&targetVelocity, &right, -PLAYER_SPEED, &targetVelocity);
+    } else if (controllerGetButton(0, R_CBUTTONS | R_JPAD)) {
+        vector3AddScaled(&targetVelocity, &right, PLAYER_SPEED, &targetVelocity);
+    }
 
-    vector3Scale(&forward, &targetVelocity, -controllerInput->stick_y * PLAYER_SPEED / 80.0f);
-    vector3AddScaled(&targetVelocity, &right, controllerInput->stick_x * PLAYER_SPEED / 80.0f, &targetVelocity);
-
+    if (controllerGetButton(0, U_CBUTTONS | U_JPAD)) {
+        vector3AddScaled(&targetVelocity, &forward, -PLAYER_SPEED, &targetVelocity);
+    } else if (controllerGetButton(0, D_CBUTTONS | D_JPAD)) {
+        vector3AddScaled(&targetVelocity, &forward, PLAYER_SPEED, &targetVelocity);
+    }
+    
     targetVelocity.y = player->body.velocity.y;
 
     vector3MoveTowards(
@@ -176,42 +265,85 @@ void playerUpdate(struct Player* player, struct Transform* cameraTransform) {
         vector3Dot(&player->body.velocity, &targetVelocity) > 0.0f ? PLAYER_ACCEL * FIXED_DELTA_TIME : PLAYER_STOP_ACCEL * FIXED_DELTA_TIME, 
         &player->body.velocity
     );
+    player->body.angularVelocity = gZeroVec;
 
     player->body.velocity.y += GRAVITY_CONSTANT * FIXED_DELTA_TIME;
 
-    vector3AddScaled(&transform->position, &player->body.velocity, FIXED_DELTA_TIME, &transform->position);
-
-    collisionObjectQueryScene(&player->collisionObject, &gCollisionScene, player, playerHandleCollision);
+    vector3AddScaled(&player->body.transform.position, &player->body.velocity, FIXED_DELTA_TIME, &player->body.transform.position);
 
     struct RaycastHit hit;
     struct Ray ray;
     ray.origin = player->body.transform.position;
     vector3Scale(&gUp, &ray.dir, -1.0f);
-    if (collisionSceneRaycast(&gCollisionScene, &ray, PLAYER_HEAD_HEIGHT, 1, &hit)) {
-        vector3AddScaled(&hit.at, &gUp, PLAYER_HEAD_HEIGHT, &player->body.transform.position);
+    if (collisionSceneRaycast(&gCollisionScene, player->body.currentRoom, &ray, COLLISION_LAYERS_TANGIBLE, PLAYER_HEAD_HEIGHT + 0.2f, 1, &hit)) {
+        struct ContactManifold* collisionManifold = contactSolverGetContactManifold(&gContactSolver, &player->collisionObject, hit.object);
 
-        player->body.velocity.y = 0.0f;
+        struct EpaResult newContact;
+
+        newContact.id = 0xFFFF;
+
+        struct Vector3* playerContact;
+        struct Vector3* otherContact;
+        
+        if (collisionManifold->shapeA == &player->collisionObject) {
+            playerContact = &newContact.contactA;
+            otherContact = &newContact.contactB;
+            vector3Negate(&hit.normal, &newContact.normal);
+        } else {
+            playerContact = &newContact.contactB;
+            otherContact = &newContact.contactA;
+            newContact.normal = hit.normal;
+        }
+
+        playerContact->x = 0.0f; playerContact->y = -PLAYER_HEAD_HEIGHT; playerContact->z = 0.0f;
+        *otherContact = hit.at;
+
+        newContact.penetration = hit.distance - PLAYER_HEAD_HEIGHT;
+
+        if (hit.object && hit.object->body) {
+            transformPointInverseNoScale(&hit.object->body->transform, otherContact, otherContact);
+        }
+
+        collisionManifold->friction = MAX(player->collisionObject.collider->friction, hit.object->collider->friction);
+        collisionManifold->restitution = MIN(player->collisionObject.collider->bounce, hit.object->collider->bounce);
+
+        contactInsert(collisionManifold, &newContact);
         player->flags |= PlayerFlagsGrounded;
     } else {
         player->flags &= ~PlayerFlagsGrounded;
+
+        struct ContactManifold* manifold = contactSolverNextManifold(&gContactSolver, &player->collisionObject, NULL);
+
+        while (manifold) {
+            for (int contact = 0; contact < manifold->contactCount; ++contact) {
+                if (manifold->contacts[contact].id == 0xFFFF) {
+                    manifold->contactCount = 0;
+                    break;
+                }
+            }
+
+            manifold = contactSolverNextManifold(&gContactSolver, &player->collisionObject, manifold);
+        }
     }
 
-    rigidBodyCheckPortals(&player->body);
+    playerHandleCollision(player);
 
-    float targetYaw = 0.0f;
-    float targetPitch = 0.0f;
+    player->body.transform.rotation = player->lookTransform.rotation;    
 
-    if (controllerGetButton(0, L_CBUTTONS)) {
-        targetYaw += ROTATE_RATE;
-    } else if (controllerGetButton(0, R_CBUTTONS)) {
-        targetYaw -= ROTATE_RATE;
+    int didPassThroughPortal = rigidBodyCheckPortals(&player->body);
+
+    player->lookTransform.position = player->body.transform.position;
+    player->lookTransform.rotation = player->body.transform.rotation;
+    quatIdent(&player->body.transform.rotation);
+
+    if (didPassThroughPortal) {
+        soundPlayerPlay(soundsPortalEnter[didPassThroughPortal - 1], 0.75f, 1.0f, NULL);
+        soundPlayerPlay(soundsPortalExit[2 - didPassThroughPortal], 0.75f, 1.0f, NULL);
     }
 
-    if (controllerGetButton(0, U_CBUTTONS)) {
-        targetPitch += ROTATE_RATE;
-    } else if (controllerGetButton(0, D_CBUTTONS)) {
-        targetPitch -= ROTATE_RATE;
-    }
+    OSContPad* controllerInput = controllersGetControllerData(0);
+    float targetYaw = -playerCleanupStickInput(controllerInput->stick_x) * ROTATE_RATE;
+    float targetPitch = playerCleanupStickInput(controllerInput->stick_y) * ROTATE_RATE;
 
     player->yawVelocity = mathfMoveTowards(
         player->yawVelocity, 
@@ -226,13 +358,13 @@ void playerUpdate(struct Player* player, struct Transform* cameraTransform) {
 
     struct Vector3 lookingForward;
     vector3Negate(&gForward, &lookingForward);
-    quatMultVector(&player->body.transform.rotation, &lookingForward, &lookingForward);
+    quatMultVector(&player->lookTransform.rotation, &lookingForward, &lookingForward);
 
     // if player is looking close to directly up or down, don't correct the rotation
     if (fabsf(lookingForward.y) < 0.99f) {
         struct Quaternion upRotation;
         quatLook(&lookingForward, &gUp, &upRotation);
-        quatLerp(&upRotation, &player->body.transform.rotation, 0.9f, &player->body.transform.rotation);
+        quatLerp(&upRotation, &player->lookTransform.rotation, 0.9f, &player->lookTransform.rotation);
     }
     
 
@@ -240,31 +372,35 @@ void playerUpdate(struct Player* player, struct Transform* cameraTransform) {
     struct Quaternion deltaRotate;
     quatAxisAngle(&gUp, player->yawVelocity * FIXED_DELTA_TIME, &deltaRotate);
     struct Quaternion tempRotation;
-    quatMultiply(&deltaRotate, &player->body.transform.rotation, &tempRotation);
+    quatMultiply(&deltaRotate, &player->lookTransform.rotation, &tempRotation);
 
     // pitch
     quatAxisAngle(&gRight, player->pitchVelocity * FIXED_DELTA_TIME, &deltaRotate);
-    quatMultiply(&tempRotation, &deltaRotate, &player->body.transform.rotation);
+    quatMultiply(&tempRotation, &deltaRotate, &player->lookTransform.rotation);
 
     // prevent player from looking too far up or down
     vector3Negate(&gForward, &lookingForward);
     quatMultVector(&tempRotation, &lookingForward, &lookingForward);
     struct Vector3 newLookingForward;
     vector3Negate(&gForward, &newLookingForward);
-    quatMultVector(&player->body.transform.rotation, &newLookingForward, &newLookingForward);
+    quatMultVector(&player->lookTransform.rotation, &newLookingForward, &newLookingForward);
 
     float pitchSign = signf(player->pitchVelocity);
 
-    if (lookingForward.y * pitchSign > newLookingForward.y * pitchSign) {
+    if (!didPassThroughPortal && lookingForward.y * pitchSign > newLookingForward.y * pitchSign) {
         struct Vector3 newForward = gZeroVec;
         newForward.y = pitchSign;
         struct Vector3 newUp;
         quatMultVector(&tempRotation, &gUp, &newUp);
-        quatLook(&newForward, &newUp, &player->body.transform.rotation);
+        quatLook(&newForward, &newUp, &player->lookTransform.rotation);
         player->pitchVelocity = 0.0f;
     }
 
-    cameraTransform->rotation = player->body.transform.rotation;
-    transformPoint(transform, &gCameraOffset, &cameraTransform->position);
+    cameraTransform->rotation = player->lookTransform.rotation;
+    cameraTransform->position = player->lookTransform.position;
     playerUpdateGrabbedObject(player);
+
+    collisionObjectUpdateBB(&player->collisionObject);
+
+    player->body.currentRoom = worldCheckDoorwayCrossings(&gCurrentLevel->world, &player->lookTransform.position, player->body.currentRoom, doorwayMask);
 }

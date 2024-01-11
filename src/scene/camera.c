@@ -4,6 +4,56 @@
 #include "defs.h"
 #include "../graphics/graphics.h"
 
+int isOutsideFrustrum(struct FrustrumCullingInformation* frustrum, struct BoundingBoxs16* boundingBox) {
+    for (int i = 0; i < frustrum->usedClippingPlaneCount; ++i) {
+        struct Vector3 closestPoint;
+
+        struct Vector3* normal = &frustrum->clippingPlanes[i].normal;
+
+        closestPoint.x = normal->x < 0.0f ? boundingBox->minX : boundingBox->maxX;
+        closestPoint.y = normal->y < 0.0f ? boundingBox->minY : boundingBox->maxY;
+        closestPoint.z = normal->z < 0.0f ? boundingBox->minZ : boundingBox->maxZ;
+
+        if (planePointDistance(&frustrum->clippingPlanes[i], &closestPoint) < 0.0f) {
+            return 1;
+        }
+    }
+
+
+    return 0;
+}
+
+int isSphereOutsideFrustrum(struct FrustrumCullingInformation* frustrum, struct Vector3* scaledCenter, float scaledRadius) {
+    for (int i = 0; i < frustrum->usedClippingPlaneCount; ++i) {
+        if (planePointDistance(&frustrum->clippingPlanes[i], scaledCenter) < -scaledRadius) {
+            return 1;
+        }
+    }
+
+    return 0;
+}
+
+int isQuadOutsideFrustrum(struct FrustrumCullingInformation* frustrum, struct CollisionQuad* quad) {
+    for (int i = 0; i < frustrum->usedClippingPlaneCount; ++i) {
+        struct Vector3* normal = &frustrum->clippingPlanes[i].normal;
+        float aLerp = vector3Dot(normal, &quad->edgeA) < 0.0f ? 0.0f : quad->edgeALength;
+        float bLerp = vector3Dot(normal, &quad->edgeB) < 0.0f ? 0.0f : quad->edgeBLength;
+
+        struct Vector3 closestPoint;
+        vector3AddScaled(&quad->corner, &quad->edgeA, aLerp, &closestPoint);
+        vector3AddScaled(&closestPoint, &quad->edgeB, bLerp, &closestPoint);
+
+        vector3Scale(&closestPoint, &closestPoint, SCENE_SCALE);
+
+        if (planePointDistance(&frustrum->clippingPlanes[i], &closestPoint) < 0.0f) {
+            return 1;
+        }
+    }
+
+
+    return 0;
+}
+
 void cameraInit(struct Camera* camera, float fov, float near, float far) {
     transformInitIdentity(&camera->transform);
     camera->fov = fov;
@@ -34,6 +84,10 @@ void cameraExtractClippingPlane(float viewPersp[4][4], struct Plane* output, int
     output->normal.y = viewPersp[1][axis] * direction + viewPersp[1][3];
     output->normal.z = viewPersp[2][axis] * direction + viewPersp[2][3];
     output->d = viewPersp[3][axis] * direction + viewPersp[3][3];
+
+    float mult = 1.0f / sqrtf(vector3MagSqrd(&output->normal));
+    vector3Scale(&output->normal, &output->normal, mult);
+    output->d *= mult;
 }
 
 Mtx* cameraSetupMatrices(struct Camera* camera, struct RenderState* renderState, float aspectRatio, u16* perspNorm, Vp* viewport, struct FrustrumCullingInformation* clippingInfo) {
@@ -71,6 +125,8 @@ Mtx* cameraSetupMatrices(struct Camera* camera, struct RenderState* renderState,
         cameraExtractClippingPlane(combined, &clippingInfo->clippingPlanes[2], 1, 1.0f);
         cameraExtractClippingPlane(combined, &clippingInfo->clippingPlanes[3], 1, -1.0f);
         cameraExtractClippingPlane(combined, &clippingInfo->clippingPlanes[4], 2, 1.0f);
+        clippingInfo->cameraPos = camera->transform.position;
+        clippingInfo->usedClippingPlaneCount = 5;
     }
 
     gSPMatrix(renderState->dl++, osVirtualToPhysical(&viewProjMatrix[1]), G_MTX_PROJECTION | G_MTX_LOAD | G_MTX_NOPUSH);

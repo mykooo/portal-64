@@ -5,50 +5,74 @@
 
 #include "math/transform.h"
 #include "math/plane.h"
+#include "math/vector2s16.h"
+#include "../levels/level_definition.h"
 
 #define FIXED_POINT_PRECISION   8
 #define FIXED_POINT_SCALAR      (1 << FIXED_POINT_PRECISION)
 
-#define VECTOR2s16_AS_ARRAY(vector) ((s16*)(vector))
-
-struct Vector2s16 {
-    s16 x;
-    s16 y;
-};
+#define NO_EDGE_CONNECTION      0xFF
 
 struct SurfaceEdge {
     u8 aIndex;
     u8 bIndex;
-};
-
-struct SurfaceFace {
-    u8 aIndex;
-    u8 bIndex;
-    u8 cIndex;
+    u8 nextEdge;
+    u8 prevEdge;
+    u8 nextEdgeReverse;
+    u8 prevEdgeReverse;
 };
 
 struct PortalSurface {
     struct Vector2s16* vertices;
-    // first sideCount edges are on the side
     struct SurfaceEdge* edges;
-    struct SurfaceFace* triangles;
-
-    u8 sideCount;
+    
     u8 edgeCount;
-    u8 triangleCount;
+    u8 vertexCount;
+    u8 shouldCleanup;
 
     struct Vector3 right;
     struct Vector3 up;
     struct Vector3 corner;
+
+    Vtx* gfxVertices;
+    Gfx* triangles;
 };
 
-struct PortalSurfaceMapping {
+struct PortalSurfaceMappingRange {
     u8 minPortalIndex;
     u8 maxPortalIndex;
 };
 
+enum PortalSurfaceReplacementFlags {
+    PortalSurfaceReplacementFlagsIsEnabled = (1 << 0),
+};
+
+struct PortalSurfaceReplacement {
+    struct PortalSurface previousSurface;
+    short flags;
+    short staticIndex;
+    short portalSurfaceIndex;
+    short roomIndex;
+};
+
+int portalSurfaceAreBothOnSameSurface();
+int portalSurfaceShouldSwapOrder(int portalToMove);
+int portalSurfaceStaticIndexForReplacement(int portalIndex);
+
 int portalSurfaceIsInside(struct PortalSurface* surface, struct Transform* portalAt);
 
-int portalSurfaceGenerate(struct PortalSurface* surface, struct Transform* portalAt, Vtx* vertices, Gfx* triangles);
+int portalSurfaceGenerate(struct PortalSurface* surface, int surfaceIndex, struct Transform* portalAt, int portalIndex, struct Transform* otherPortalAt, struct PortalSurface* newSurface);
+
+void portalSurfaceCleanup(struct PortalSurface* portalSurface);
+
+int portalSurfaceAdjustPosition(struct PortalSurface* surface, struct Transform* portalAt, struct Vector2s16* output, struct Vector2s16* outlineLoopOutput);
+
+struct PortalSurface* portalSurfaceGetOriginalSurface(int portalSurfaceIndex, int portalIndex);
+void portalSurfaceInverse(struct PortalSurface* surface, struct Vector2s16* input, struct Vector3* output);
+
+struct PortalSurface* portalSurfaceReplace(int portalSurfaceIndex, int roomIndex, int portalIndex, struct PortalSurface* with);
+void portalSurfaceRevert(int portalIndex);
+void portalSurfaceCheckCleanupQueue();
+
 
 #endif

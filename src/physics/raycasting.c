@@ -2,14 +2,14 @@
 
 #include "math/mathf.h"
 #include "collision_box.h"
+#include "collision_cylinder.h"
+#include "line.h"
 
 #define NEAR_EDGE_ZERO      0.001f
 #define NEAR_DOT_ZERO       0.00001f
 #define MIN_RAY_LENGTH      0.05f
 
-int raycastQuad(struct CollisionObject* quadObject, struct Ray* ray, float maxDistance, struct RaycastHit* contact) {
-    struct CollisionQuad* quad = (struct CollisionQuad*)quadObject->collider->data;
-
+int raycastQuadShape(struct CollisionQuad* quad, struct Ray* ray, float maxDistance, struct RaycastHit* contact) {
     float normalDot = vector3Dot(&ray->dir, &quad->plane.normal);
 
     if (fabsf(normalDot) < NEAR_DOT_ZERO) {
@@ -29,15 +29,30 @@ int raycastQuad(struct CollisionObject* quadObject, struct Ray* ray, float maxDi
     }
 
     contact->normal = quad->plane.normal;
-    contact->object = quadObject;
 
     return 1;
+}
+
+int raycastQuad(struct CollisionObject* quadObject, struct Ray* ray, float maxDistance, struct RaycastHit* contact) {
+    struct CollisionQuad* quad = (struct CollisionQuad*)quadObject->collider->data;
+
+    int result = raycastQuadShape(quad, ray, maxDistance, contact);
+
+    if (result) {
+        contact->object = quadObject;
+    }
+
+    return result;
 }
 
 int raycastBox(struct CollisionObject* boxObject, struct Ray* ray, float maxDistance, struct RaycastHit* contact) {
     struct CollisionBox* box = (struct CollisionBox*)boxObject->collider->data;
 
     float distance = rayDetermineDistance(ray, &boxObject->body->transform.position);
+
+    if (distance < 0.0f) {
+        return 0;
+    }
 
     struct Vector3 nearestPoint;
 
@@ -47,11 +62,8 @@ int raycastBox(struct CollisionObject* boxObject, struct Ray* ray, float maxDist
         return 0;
     }
 
-    struct Transform boxInverse;
-    transformInvert(&boxObject->body->transform, &boxInverse);
-
     struct Ray localRay;
-    rayTransform(&boxInverse, ray, &localRay);
+    collisionObjectLocalRay(boxObject, ray, &localRay);
 
     contact->distance = maxDistance;
 
@@ -61,20 +73,16 @@ int raycastBox(struct CollisionObject* boxObject, struct Ray* ray, float maxDist
         // d = -(o * N + d) / (N * D)
 
         float dir = VECTOR3_AS_ARRAY(&localRay.dir)[i];
-        
-        float denominator = fabsf(dir);
 
-        if (denominator < NEAR_DOT_ZERO) {
+        if (fabsf(dir) < NEAR_DOT_ZERO) {
             continue;
         }
 
-        float numerator = VECTOR3_AS_ARRAY(&localRay.origin)[i] - VECTOR3_AS_ARRAY(&box->sideLength)[i];
-
-        if (dir > 0) {
-            numerator = -numerator;
+        if (dir > 0.0f) {
+            hitTest.distance = -(VECTOR3_AS_ARRAY(&localRay.origin)[i] + VECTOR3_AS_ARRAY(&box->sideLength)[i]) / dir;
+        } else {
+            hitTest.distance = -(VECTOR3_AS_ARRAY(&localRay.origin)[i] - VECTOR3_AS_ARRAY(&box->sideLength)[i]) / dir;
         }
-
-        hitTest.distance = numerator / denominator;
 
         // check if hit is within valid bounds
         if (hitTest.distance < MIN_RAY_LENGTH || hitTest.distance > contact->distance) {
@@ -101,6 +109,8 @@ int raycastBox(struct CollisionObject* boxObject, struct Ray* ray, float maxDist
         transformPoint(&boxObject->body->transform, &contact->at, &contact->at);
         quatMultVector(&boxObject->body->transform.rotation, &contact->normal, &contact->normal);
     }
+
+    contact->roomIndex = boxObject->body->currentRoom;
 
     return contact->distance != maxDistance;
 }
