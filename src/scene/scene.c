@@ -35,6 +35,7 @@
 #include "../player/player_rumble_clips.h"
 
 #include "../build/src/audio/subtitles.h"
+#include "../build/src/audio/clips.h"
 
 extern struct GameMenu gGameMenu;
 
@@ -70,6 +71,8 @@ void sceneInitDynamicColliders(struct Scene* scene) {
         collisionObjectInit(&colliders[i], &colliderType[i], &body[i], 1.0f, COLLISION_LAYERS_TANGIBLE | COLLISION_LAYERS_BLOCK_BALL | COLLISION_LAYERS_STATIC);
         rigidBodyMarkKinematic(&body[i]);
 
+        body[i].flags |= RigidBodyForceVelocity;
+
         body[i].currentRoom = gCurrentLevel->dynamicBoxes[i].roomIndex;
 
         collisionSceneAddDynamicObject(&colliders[i]);
@@ -90,10 +93,7 @@ void sceneInit(struct Scene* scene) {
         checkpointLoadLast(scene);
     }
 
-    if (gCurrentLevelIndex > gSaveData.header.chapterProgress) {
-        gSaveData.header.chapterProgress = gCurrentLevelIndex;
-        savefileSave();
-    }
+    savefileMarkChapterProgress(gCurrentLevelIndex);
 
     gGameMenu.state = GameMenuStateResumeGame;
     scene->ignorePortalGun = 0;
@@ -103,7 +103,7 @@ void sceneInitNoPauseMenu(struct Scene* scene, int mainMenuMode) {
     signalsInit(1);
     rumblePakSetPaused(0);
 
-    cameraInit(&scene->camera, 70.0f, DEFAULT_NEAR_PLANE * SCENE_SCALE, DEFAULT_FAR_PLANE * SCENE_SCALE);
+    cameraInit(&scene->camera, DEFAULT_CAMERA_FOV, DEFAULT_NEAR_PLANE * SCENE_SCALE, DEFAULT_FAR_PLANE * SCENE_SCALE);
 
     struct Location* startLocation = levelGetLocation(gCurrentLevel->startLocation);
     struct Location combinedLocation;
@@ -114,7 +114,9 @@ void sceneInitNoPauseMenu(struct Scene* scene, int mainMenuMode) {
 
     playerInit(&scene->player, &combinedLocation, &startVelocity);
 
-    portalGunInit(&scene->portalGun, &scene->player.lookTransform);
+    struct Vector3* startPosition = &levelRelativeTransform()->position;
+
+    portalGunInit(&scene->portalGun, &scene->player.lookTransform, startPosition->x == 0.0f && startPosition->y == 1.0f && startPosition->z == 0.0f);
 
     scene->camera.transform.rotation = scene->player.lookTransform.rotation;
     scene->camera.transform.position = scene->player.lookTransform.position;
@@ -123,10 +125,12 @@ void sceneInitNoPauseMenu(struct Scene* scene, int mainMenuMode) {
 
     if (gCurrentLevelIndex >= LEVEL_INDEX_WITH_GUN_0) {
         playerGivePortalGun(&scene->player, PlayerHasFirstPortalGun);
+        scene->portalGun.portalGunVisible = 1;
     }
 
     if (gCurrentLevelIndex >= LEVEL_INDEX_WITH_GUN_1) {
         playerGivePortalGun(&scene->player, PlayerHasSecondPortalGun);
+        scene->portalGun.portalGunVisible = 1;
     }
 
     portalInit(&scene->portals[0], 0);
@@ -271,15 +275,20 @@ void sceneRenderPerformanceMetrics(struct Scene* scene, struct RenderState* rend
         return;
     }
 
+    float memoryUsage = renderStateMemoryUsage(renderState);
+
     gDPSetCycleType(renderState->dl++, G_CYC_1CYCLE);
     gDPSetFillColor(renderState->dl++, (GPACK_RGBA5551(0, 0, 0, 1) << 16 | GPACK_RGBA5551(0, 0, 0, 1)));
     gDPSetCombineMode(renderState->dl++, SOLID_COLOR, SOLID_COLOR);
     gDPSetEnvColor(renderState->dl++, 32, 32, 32, 255);
-    gSPTextureRectangle(renderState->dl++, 32 << 2, 32 << 2, (32 + 256) << 2, (32 + 16) << 2, 0, 0, 0, 1, 1);
+    gSPTextureRectangle(renderState->dl++, 32 << 2, 32 << 2, (32 + 256) << 2, (32 + 8) << 2, 0, 0, 0, 1, 1);
+    gSPTextureRectangle(renderState->dl++, 32 << 2, 44 << 2, (32 + 256) << 2, (44 + 8) << 2, 0, 0, 0, 1, 1);
     gDPPipeSync(renderState->dl++);
     gDPSetEnvColor(renderState->dl++, 32, 255, 32, 255);
-    gSPTextureRectangle(renderState->dl++, 33 << 2, 33 << 2, (32 + 254 * scene->cpuTime / scene->lastFrameTime) << 2, (32 + 14) << 2, 0, 0, 0, 1, 1);
+    gSPTextureRectangle(renderState->dl++, 33 << 2, 33 << 2, (32 + 254 * scene->cpuTime / scene->lastFrameTime) << 2, (32 + 6) << 2, 0, 0, 0, 1, 1);
+    gSPTextureRectangle(renderState->dl++, 33 << 2, 45 << 2, (int)(32 + 254 * memoryUsage * 4.0f), (44 + 6) << 2, 0, 0, 0, 1, 1);
     gDPPipeSync(renderState->dl++);
+
 }
 
 LookAt gLookAt = gdSPDefLookAt(127, 0, 0, 0, 127, 0);
@@ -304,21 +313,27 @@ void sceneRender(struct Scene* scene, struct RenderState* renderState, struct Gr
     Mtx* staticMatrices = sceneAnimatorBuildTransforms(&scene->animator, renderState);
 
     renderPlanBuild(&renderPlan, scene, renderState);
-    renderPlanExecute(&renderPlan, scene, staticMatrices, renderState);
+    renderPlanExecute(&renderPlan, scene, staticMatrices, scene->animator.transforms, renderState, task);
 
     // contactSolverDebugDraw(&gContactSolver, renderState);
 
-    portalGunRenderReal(&scene->portalGun, renderState, &scene->camera, scene->portalGun.portalGunVisible);
+    portalGunRenderReal(
+        &scene->portalGun, 
+        renderState, 
+        &scene->camera, 
+        scene->hud.lastPortalIndexShot
+    );
 
     gDPPipeSync(renderState->dl++);
     gDPSetRenderMode(renderState->dl++, G_RM_OPA_SURF, G_RM_OPA_SURF2);
     gSPGeometryMode(renderState->dl++, G_ZBUFFER | G_LIGHTING | G_CULL_BOTH, G_SHADE);
 
+    if (gGameMenu.state == GameMenuStateResumeGame || scene->hud.fadeInTimer > 0.0f) {
+        hudRender(&scene->hud, &scene->player, renderState);
+    }
+
     if (gGameMenu.state != GameMenuStateResumeGame) {
         gameMenuRender(&gGameMenu, renderState, task);
-    }
-    else{
-        hudRender(&scene->hud, &scene->player, renderState);
     }
         
 
@@ -369,7 +384,7 @@ void sceneCheckPortals(struct Scene* scene) {
     }
 
     if (fireOrange && !fireBlue && hasOrange && !playerIsGrabbing(&scene->player) && !portalGunIsFiring(&scene->portalGun)) {
-        portalGunFire(&scene->portalGun, 0, &raycastRay, &playerUp, scene->player.body.currentRoom);
+        portalGunFire(&scene->portalGun, 0, &raycastRay, &scene->player.lookTransform, &playerUp, scene->player.body.currentRoom);
         scene->player.flags |= PlayerJustShotPortalGun;
         hudPortalFired(&scene->hud, 0);
         soundPlayerPlay(soundsPortalgunShoot[0], 1.0f, 1.0f, NULL, NULL, SoundTypeAll);
@@ -378,7 +393,7 @@ void sceneCheckPortals(struct Scene* scene) {
     }
 
     if (((fireBlue && !fireOrange) || (!hasOrange && fireOrange)) && hasBlue && !playerIsGrabbing(&scene->player) && !portalGunIsFiring(&scene->portalGun)) {
-        portalGunFire(&scene->portalGun, 1, &raycastRay, &playerUp, scene->player.body.currentRoom);
+        portalGunFire(&scene->portalGun, 1, &raycastRay, &scene->player.lookTransform, &playerUp, scene->player.body.currentRoom);
         scene->player.flags |= PlayerJustShotPortalGun;
         hudPortalFired(&scene->hud, 1);
         soundPlayerPlay(soundsPortalgunShoot[1], 1.0f, 1.0f, NULL, NULL, SoundTypeAll);
@@ -428,9 +443,12 @@ void sceneCheckPortals(struct Scene* scene) {
             didClose |= sceneClosePortal(scene, 1);
         }
         scene->player.body.flags &= ~RigidBodyFizzled;
+        scene->hud.lastPortalIndexShot = -1;
 
         if (didClose) {
             rumblePakClipPlay(&gPlayerClosePortalRumble);
+            portalGunFizzle(&scene->portalGun);
+            soundPlayerPlay(SOUNDS_PORTAL_FIZZLE2, 0.6f, 1.0f, NULL, NULL, SoundTypeAll);
         }
     }
 
@@ -537,7 +555,15 @@ void sceneUpdateAnimatedObjects(struct Scene* scene) {
         relativeTransform.rotation = boxDef->rotation;   
         relativeTransform.scale = gOneVec;
 
-        transformConcat(&baseTransform, &relativeTransform, &scene->dynamicColliders[i].body->transform);
+        struct Transform newTransform;
+
+        transformConcat(&baseTransform, &relativeTransform, &newTransform);
+
+        struct Vector3 movement;
+        vector3Sub(&newTransform.position, &scene->dynamicColliders[i].body->transform .position, &movement);
+
+        scene->dynamicColliders[i].body->transform = newTransform;
+        vector3Scale(&movement, &scene->dynamicColliders[i].body->velocity, 1.0f / FIXED_DELTA_TIME);
 
         collisionObjectUpdateBB(&scene->dynamicColliders[i]);
     }
@@ -625,7 +651,13 @@ void sceneUpdate(struct Scene* scene) {
     sceneUpdateListeners(scene);
     sceneCheckPortals(scene);
 
-    if ((playerIsDead(&scene->player) && (controllerActionGet(ControllerActionPause) || controllerActionGet(ControllerActionJump))) ||
+    if ((playerIsDead(&scene->player) && (
+        controllerActionGet(ControllerActionPause) || 
+        controllerActionGet(ControllerActionJump) || 
+        controllerActionGet(ControllerActionUseItem) || 
+        controllerActionGet(ControllerActionOpenPortal0) || 
+        controllerActionGet(ControllerActionOpenPortal1)
+    )) ||
         scene->player.lookTransform.position.y < KILL_PLANE_Y) {
         levelLoadLastCheckpoint();
     }
@@ -692,6 +724,10 @@ void sceneUpdate(struct Scene* scene) {
 
     for (int i = 0; i < scene->pedestalCount; ++i) {
         pedestalUpdate(&scene->pedestals[i]);
+    }
+
+    for (int i = 0; i < scene->signageCount; ++i) {
+        signageUpdate(&scene->signage[i]);
     }
 
     for (int i = 0; i < scene->boxDropperCount; ++i) {
@@ -803,7 +839,7 @@ int sceneOpenPortal(struct Scene* scene, struct Transform* at, int transformInde
 
         struct Portal* portal = &scene->portals[portalIndex];
 
-        if (!sceneCheckIsTouchingPortal(scene, 1 - portalIndex, at, surfaceIndex) && portalAttachToSurface(portal, existingSurface, surfaceIndex, &finalAt, just_checking)) {
+        if (!sceneCheckIsTouchingPortal(scene, 1 - portalIndex, at, surfaceIndex) && portalAttachToSurface(portal, existingSurface, surfaceIndex, &finalAt, just_checking, portalIndex)) {
             if (just_checking){
                 return 1;
             }
@@ -838,6 +874,12 @@ int sceneOpenPortal(struct Scene* scene, struct Transform* at, int transformInde
                 portal->flags |= PortalFlagsPlayerPortal;
             } else {
                 portal->flags &= ~PortalFlagsPlayerPortal;
+            }
+
+            if (existingSurface->hasDecals) {
+                portal->flags |= PortalFlagsZOffset;
+            } else {
+                portal->flags &= ~PortalFlagsZOffset;
             }
 
             if (collisionSceneIsPortalOpen()) {

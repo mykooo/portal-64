@@ -32,7 +32,12 @@ skeletool64: $(OBJ_FILES) $(LUA_OBJ_FILES)
 	g++ -g -o skeletool64 $(OBJ_FILES) $(LUA_OBJ_FILES) $(LINKER_FLAGS)
 
 clean:
-	rm -r build/
+	rm -rf build/
+	rm -f skeletool64
+	rm -f *.zip*
+	rm -rf CImg-*
+	rm -rf cimg
+	@$(MAKE) -C yaml-cpp clean
 
 init:
 	

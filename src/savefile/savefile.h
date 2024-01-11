@@ -12,7 +12,7 @@
 #define SAVE_SLOT_IMAGE_W   36
 #define SAVE_SLOT_IMAGE_H   27
 
-#define THUMBANIL_IMAGE_SIZE    (SAVE_SLOT_IMAGE_W * SAVE_SLOT_IMAGE_H * sizeof(u16))
+#define THUMBNAIL_IMAGE_SIZE    (SAVE_SLOT_IMAGE_W * SAVE_SLOT_IMAGE_H * sizeof(u16))
 
 #define THUMBNAIL_IMAGE_SPACE    2048
 
@@ -20,7 +20,7 @@
 
 #define SCREEN_SHOT_SRAM(slotIndex)     (((slotIndex) + 1) * SAVE_SLOT_SIZE + MAX_CHECKPOINT_SIZE + SRAM_START_ADDR)
 
-#define SAVEFILE_HEADER 0xDEF4
+#define SAVEFILE_HEADER 0xDEF5
 
 // first save slot is always reserved for auto save
 #define MAX_SAVE_SLOTS  ((int)(SRAM_SIZE / SAVE_SLOT_SIZE) - 1)
@@ -28,7 +28,7 @@
 
 struct SaveHeader {
     unsigned header;
-    unsigned char chapterProgress;
+    unsigned char chapterProgressLevelIndex;
     unsigned char flags;
     unsigned char nextTestSubject;
 };
@@ -90,11 +90,15 @@ extern int gCurrentTestSubject;
 void savefileLoad();
 void savefileSave();
 
+void savefileDeleteGame(int slotIndex);
+
 void savefileSaveGame(Checkpoint checkpoint, u16* screenshot, int testChamberIndex, int subjectNumber, int slotIndex);
 int savefileListSaves(struct SaveSlotInfo* slots, int includeAuto);
 int savefileNextTestSubject();
 int savefileSuggestedSlot(int testSubject);
 int savefileOldestSlot();
+
+void savefileMarkChapterProgress(int chamberNumber);
 
 int savefileFirstFreeSlot();
 

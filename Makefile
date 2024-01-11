@@ -8,14 +8,16 @@
 # --------------------------------------------------------------------
 include /usr/include/n64/make/PRdefs
 
-
 SKELATOOL64:=skelatool64/skeletool64
 VTF2PNG:=vtf2png
 SFZ2N64:=sfz2n64
 
 $(SKELATOOL64):
 	skelatool64/setup_dependencies.sh
-	make -C skelatool64
+
+
+
+	@$(MAKE) -C skelatool64
 
 OPTIMIZER		:= -Os
 LCDEFS			:= -DDEBUG -g -Isrc/ -I/usr/include/n64/nustd -Werror -Wall
@@ -23,6 +25,10 @@ N64LIB			:= -lultra_rom -lnustd
 
 ifeq ($(PORTAL64_WITH_DEBUGGER),1)
 LCDEFS += -DPORTAL64_WITH_DEBUGGER
+endif
+
+ifeq ($(PORTAL64_WITH_RSP_PROFILER),1)
+LCDEFS += -DPORTAL64_WITH_RSP_PROFILER
 endif
 
 BASE_TARGET_NAME = build/portal
@@ -36,7 +42,7 @@ ASMFILES    =	$(shell find asm/ -type f -name '*.s')
 
 ASMOBJECTS  =	$(patsubst %.s, build/%.o, $(ASMFILES))
 
-CODEFILES = $(shell find src/ -type f -name '*.c')
+CODEFILES = $(shell find src/ -type f -name '*.c' | sort)
 
 ifeq ($(PORTAL64_WITH_GFX_VALIDATOR),1)
 LCDEFS += -DPORTAL64_WITH_GFX_VALIDATOR
@@ -66,10 +72,12 @@ LDFLAGS =	-L/usr/lib/n64 $(N64LIB)  -L$(N64_LIBGCCDIR) -lgcc
 
 default:	english_audio
 
-english_audio: portal_pak_dir
+english_audio: build/src/audio/subtitles.h portal_pak_dir $(SKELATOOL64)
+	@$(MAKE) -C skelatool64
 	@$(MAKE) buildgame
 
-all_languages: portal_pak_dir german_audio french_audio russian_audio spanish_audio
+all_languages: build/src/audio/subtitles.h portal_pak_dir german_audio french_audio russian_audio spanish_audio $(SKELATOOL64)
+	@$(MAKE) -C skelatool64
 	@$(MAKE) buildgame
 
 german_audio: vpk/portal_sound_vo_german_dir.vpk vpk/portal_sound_vo_german_000.vpk portal_pak_dir
@@ -254,11 +262,11 @@ MODEL_LIST = assets/models/player/chell.blend \
 	assets/models/props/round_elevator_interior.blend \
 	assets/models/props/round_elevator_collision.blend \
 	assets/models/props/signage.blend \
-	assets/models/props/signage_off.blend \
 	assets/models/portal/portal_blue.blend \
 	assets/models/portal/portal_blue_filled.blend \
 	assets/models/portal/portal_blue_face.blend \
 	assets/models/portal/portal_collider.blend \
+	assets/models/portal/portal_collider_vertical.blend \
 	assets/models/portal/portal_orange.blend \
 	assets/models/portal/portal_orange_filled.blend \
 	assets/models/portal/portal_orange_face.blend \
@@ -293,6 +301,7 @@ DYNAMIC_ANIMATED_MODEL_LIST = assets/models/pedestal.blend \
 
 ANIM_LIST = build/assets/models/pedestal_anim.o \
 	build/assets/models/player/chell_anim.o \
+	build/assets/models/portal_gun/v_portalgun_anim.o \
 	build/assets/models/props/box_dropper_anim.o \
 	build/assets/models/props/combine_ball_catcher_anim.o \
 	build/assets/models/props/combine_ball_launcher_anim.o \
@@ -336,8 +345,10 @@ build/src/menu/text_manipulation.o: build/src/audio/subtitles.h
 build/src/scene/scene_animator.o: build/src/audio/clips.h
 build/src/menu/cheat_codes.o: build/src/audio/clips.h
 build/src/levels/intro.o: build/src/audio/clips.h build/assets/materials/images.h
+build/src/levels/credits.o: build/src/audio/clips.h build/assets/materials/ui.h
 build/src/menu/savefile_list.o: build/assets/materials/ui.h build/src/audio/clips.h
 build/src/font/dejavusans_images.o: build/assets/materials/ui.h
+build/src/font/liberation_mono_images.o: build/assets/materials/ui.h
 build/src/player/player.o: build/assets/models/player/chell.h build/assets/materials/static.h build/src/audio/subtitles.h
 build/src/scene/ball_catcher.o: build/assets/models/props/combine_ball_catcher.h build/assets/materials/static.h build/assets/models/dynamic_animated_model_list.h
 build/src/scene/ball_launcher.o: build/assets/models/props/combine_ball_launcher.h build/assets/materials/static.h build/assets/models/dynamic_animated_model_list.h
@@ -356,10 +367,11 @@ build/src/scene/security_camera.o: build/src/audio/clips.h build/assets/models/p
 build/src/scene/signage.o: $(MODEL_HEADERS)
 build/src/scene/switch.o: build/assets/models/props/switch001.h build/assets/materials/static.h build/assets/models/dynamic_animated_model_list.h
 build/src/util/dynamic_asset_data.o: build/assets/models/dynamic_model_list_data.h
+build/src/util/dynamic_animated_asset_data.o: build/assets/models/dynamic_animated_model_list_data.h
 build/src/util/dynamic_asset_loader.o: build/assets/models/dynamic_model_list.h build/assets/models/dynamic_animated_model_list.h
 build/src/menu/audio_options.o: build/src/audio/subtitles.h
 build/src/menu/video_options.o: build/src/audio/subtitles.h
-build/src/scene/scene.o: build/src/audio/subtitles.h
+build/src/scene/scene.o: build/src/audio/subtitles.h build/src/audio/clips.h
 build/src/menu/main_menu.o: build/src/audio/subtitles.h
 
 
@@ -367,7 +379,9 @@ ANIM_TEST_CHAMBERS = build/assets/test_chambers/test_chamber_00/test_chamber_00_
     build/assets/test_chambers/test_chamber_03/test_chamber_03_anim.o \
 	build/assets/test_chambers/test_chamber_04/test_chamber_04_anim.o \
 	build/assets/test_chambers/test_chamber_06/test_chamber_06_anim.o \
-	build/assets/test_chambers/test_chamber_07/test_chamber_07_anim.o
+	build/assets/test_chambers/test_chamber_07/test_chamber_07_anim.o \
+	build/assets/test_chambers/test_chamber_08/test_chamber_08_anim.o \
+	build/assets/test_chambers/test_chamber_09/test_chamber_09_anim.o
 
 build/anims.ld: $(ANIM_LIST) $(ANIM_TEST_CHAMBERS) tools/generate_animation_ld.js
 	@mkdir -p $(@D)
@@ -384,7 +398,9 @@ TEST_CHAMBERS = assets/test_chambers/test_chamber_00/test_chamber_00.blend \
 	assets/test_chambers/test_chamber_04/test_chamber_04.blend \
 	assets/test_chambers/test_chamber_05/test_chamber_05.blend \
 	assets/test_chambers/test_chamber_06/test_chamber_06.blend \
-	assets/test_chambers/test_chamber_07/test_chamber_07.blend
+	assets/test_chambers/test_chamber_07/test_chamber_07.blend \
+	assets/test_chambers/test_chamber_08/test_chamber_08.blend \
+	assets/test_chambers/test_chamber_09/test_chamber_09.blend
 
 TEST_CHAMBER_HEADERS = $(TEST_CHAMBERS:%.blend=build/%.h)
 TEST_CHAMBER_OBJECTS = $(TEST_CHAMBERS:%.blend=build/%_geo.o)
@@ -499,35 +515,17 @@ build/src/decor/decor_object_list.o: build/src/audio/clips.h
 ## Subtitles
 ####################
 
-SUBTITLE_LANGUAGES = english \
-	brazilian \
-    bulgarian \
-    czech \
-    danish \
-    german \
-    spanish \
-    latam \
-	greek \
-    french \
-    italian \
-    polish \
-    hungarian \
-    dutch \
-    norwegian \
-    portuguese \
-    russian \
-    romanian \
-    finnish \
-    swedish \
-    turkish \
-	ukrainian
+SUBTITLE_SOURCES = $(shell find build/src/audio/ -type f -name 'subtitles_*.c')
+SUBTITLE_OBJECTS = $(patsubst %.c, %.o, $(SUBTITLE_SOURCES))
+	
+build/src/audio/subtitles_%.o: build/src/audio/subtitles_%.c
+	@mkdir -p $(@D)
+	$(CC) $(CFLAGS) -MM $^ -MF "$(@:.o=.d)" -MT"$@"
+	$(CC) $(CFLAGS) -c -o $@ $<
 
-SUBTITLE_SOURCES = $(SUBTITLE_LANGUAGES:%=build/src/audio/subtitles_%.c)
-SUBTITLE_OBJECTS = $(SUBTITLE_LANGUAGES:%=build/src/audio/subtitles_%.o)
-
-build/src/audio/subtitles.h build/src/audio/subtitles.c build/subtitles.ld $(SUBTITLE_SOURCES): vpk/Portal/portal/resource/closecaption_english.txt vpk/Portal/hl2/resource/gameui_english.txt vpk/Portal/hl2/resource/valve_english.txt assets/translations/extra_english.txt tools/level_scripts/subtitle_generate.py
-	python3 tools/level_scripts/subtitle_generate.py $(SUBTITLE_LANGUAGES)
-
+build/src/audio/subtitles.h build/src/audio/subtitles.c build/subtitles.ld: vpk/Portal/portal/resource/closecaption_english.txt vpk/Portal/hl2/resource/gameui_english.txt vpk/Portal/hl2/resource/valve_english.txt assets/translations/extra_english.txt tools/level_scripts/subtitle_generate.py
+	python3 tools/level_scripts/subtitle_generate.py
+	
 ####################
 ## Linking
 ####################
@@ -550,7 +548,7 @@ CODEOBJECTS_NO_DEBUG = $(CODEOBJECTS)
 DATA_OBJECTS = build/assets/materials/images_mat.o
 
 ifeq ($(PORTAL64_WITH_DEBUGGER),1)
-CODEOBJECTS_NO_DEBUG += build/debugger/debugger_stub.o build/debugger/serial.o 
+CODEOBJECTS_NO_DEBUG += build/debugger/debugger_stub.o build/debugger/serial_stub.o 
 endif
 
 $(CODESEGMENT)_no_debug.o:	$(CODEOBJECTS_NO_DEBUG)
@@ -564,6 +562,7 @@ $(BASE_TARGET_NAME).z64: $(CODESEGMENT)_no_debug.o $(OBJECTS) $(DATA_OBJECTS) $(
 	$(LD) -L. -T $(CP_LD_SCRIPT)_no_debug.ld -Map $(BASE_TARGET_NAME)_no_debug.map -o $(BASE_TARGET_NAME).elf
 	$(OBJCOPY) --pad-to=0x100000 --gap-fill=0xFF $(BASE_TARGET_NAME).elf $(BASE_TARGET_NAME).z64 -O binary
 	makemask $(BASE_TARGET_NAME).z64
+	sh tools/romfix64.sh $(BASE_TARGET_NAME).z64
 
 # with debugger
 CODEOBJECTS_DEBUG = $(CODEOBJECTS) 
@@ -582,12 +581,14 @@ $(BASE_TARGET_NAME)_debug.z64: $(CODESEGMENT)_debug.o $(OBJECTS) $(DATA_OBJECTS)
 	$(LD) -L. -T $(CP_LD_SCRIPT)_debug.ld -Map $(BASE_TARGET_NAME)_debug.map -o $(BASE_TARGET_NAME)_debug.elf
 	$(OBJCOPY) --pad-to=0x100000 --gap-fill=0xFF $(BASE_TARGET_NAME)_debug.elf $(BASE_TARGET_NAME)_debug.z64 -O binary
 	makemask $(BASE_TARGET_NAME)_debug.z64
+	sh tools/romfix64.sh $(BASE_TARGET_NAME).z64
 
 clean:
 	rm -rf build
 	rm -rf portal_pak_dir
 	rm -rf portal_pak_modified
-	rm -rf assets/locales/
+	rm -rf assets/locales
+	@$(MAKE) -C skelatool64 clean
 
 clean-src:
 	rm -rf build/src
@@ -607,8 +608,5 @@ clean-assets:
 	rm -f $(BASE_TARGET_NAME).elf
 	rm -f $(BASE_TARGET_NAME).z64
 	rm -f $(BASE_TARGET_NAME)_debug.z64
-
-fix:
-	wine tools/romfix64.exe build/portal.z64 
 
 .SECONDARY:

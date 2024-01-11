@@ -51,6 +51,8 @@ void sceneSerializePortals(struct Serializer* serializer, SerializeAction action
     }
 }
 
+#define PORTAL_FLAGS_TO_DESERIALIZE    (PortalFlagsPlayerPortal | PortalFlagsZOffset)
+
 void sceneDeserializePortals(struct Serializer* serializer, struct Scene* scene) {
     for (int portalIndex = 0; portalIndex < 2; ++portalIndex) {
         char flags;
@@ -80,7 +82,8 @@ void sceneDeserializePortals(struct Serializer* serializer, struct Scene* scene)
             existingSurface, 
             portalSurfaceIndex, 
             &transform,
-            0
+            0,
+            portalIndex
         );
 
         serializeRead(serializer, &portal->transformIndex, sizeof(portal->transformIndex));
@@ -97,11 +100,8 @@ void sceneDeserializePortals(struct Serializer* serializer, struct Scene* scene)
         collisionSceneSetPortal(portalIndex, &portal->rigidBody.transform, roomIndex, colliderIndex);
         collisionObjectUpdateBB(&portal->collisionObject);
 
-        if (flags & PortalFlagsPlayerPortal) {
-            portal->flags |= PortalFlagsPlayerPortal;
-        } else {
-            portal->flags &= ~PortalFlagsPlayerPortal;
-        }
+        portal->flags &= ~PORTAL_FLAGS_TO_DESERIALIZE;
+        portal->flags |= PORTAL_FLAGS_TO_DESERIALIZE & flags;
 
         portal->opacity = 0.0f;
     }
@@ -418,6 +418,13 @@ void switchSerialize(struct Serializer* serializer, SerializeAction action, stru
     }
 }
 
+void signageSerialize(struct Serializer* serializer, SerializeAction action, struct Scene* scene) {
+    for (int i = 0; i < scene->signageCount; ++i) {
+        struct Signage* signage = &scene->signage[i];
+        action(serializer, &signage->currentFrame, sizeof(signage->currentFrame));
+    }
+}
+
 void sceneAnimatorDeserialize(struct Serializer* serializer, struct Scene* scene) {
     for (int i = 0; i < scene->animator.animatorCount; ++i) {
         serializeRead(serializer, &scene->animator.state[i].playbackSpeed, sizeof(float));
@@ -468,6 +475,8 @@ void sceneSerialize(struct Serializer* serializer, SerializeAction action, struc
     WRITE_ALIGN_CHECK;
     pedestalSerialize(serializer, action, scene);
     WRITE_ALIGN_CHECK;
+    signageSerialize(serializer, action, scene);
+    WRITE_ALIGN_CHECK;
     launcherSerialize(serializer, action, scene);
     WRITE_ALIGN_CHECK;
     catcherSerialize(serializer, action, scene);
@@ -497,6 +506,8 @@ void sceneDeserialize(struct Serializer* serializer, struct Scene* scene) {
     READ_ALIGN_CHECK;
     pedestalDeserialize(serializer, scene);
     READ_ALIGN_CHECK;
+    signageSerialize(serializer, serializeRead, scene);
+    READ_ALIGN_CHECK;
     launcherDeserialize(serializer, scene);
     READ_ALIGN_CHECK;
     catcherDeserialize(serializer, scene);
@@ -511,4 +522,9 @@ void sceneDeserialize(struct Serializer* serializer, struct Scene* scene) {
     }
 
     scene->hud.fadeInTimer = 0.0f;
+
+    if (scene->player.flags & (PlayerHasFirstPortalGun | PlayerHasSecondPortalGun)) {
+        scene->portalGun.portalGunVisible = 1;
+        scene->portalGun.rotation = scene->player.lookTransform.rotation;
+    }
 }

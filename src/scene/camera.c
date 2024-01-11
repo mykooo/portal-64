@@ -38,6 +38,26 @@ enum FrustrumResult isOutsideFrustrum(struct FrustrumCullingInformation* frustru
     return result;
 }
 
+int isRotatedBoxOutsideFrustrum(struct FrustrumCullingInformation* frustrum, struct RotatedBox* rotatedBox) {
+    for (int i = 0; i < frustrum->usedClippingPlaneCount; ++i) {
+        struct Vector3 closestPoint = rotatedBox->origin;
+
+        struct Vector3* normal = &frustrum->clippingPlanes[i].normal;
+
+        for (int axis = 0; axis < 3; ++axis) {
+            if (vector3Dot(&rotatedBox->sides[axis], normal) > 0.0f) {
+                vector3Add(&closestPoint, &rotatedBox->sides[axis], &closestPoint);
+            }
+        }
+
+        if (planePointDistance(&frustrum->clippingPlanes[i], &closestPoint) < 0.00001f) {
+            return 1;
+        }
+    }
+
+    return 0;
+}
+
 int isSphereOutsideFrustrum(struct FrustrumCullingInformation* frustrum, struct Vector3* scaledCenter, float scaledRadius) {
     for (int i = 0; i < frustrum->usedClippingPlaneCount; ++i) {
         if (planePointDistance(&frustrum->clippingPlanes[i], scaledCenter) < -scaledRadius) {
@@ -85,13 +105,7 @@ void cameraBuildViewMatrix(struct Camera* camera, float matrix[4][4]) {
 }
 
 void cameraBuildProjectionMatrix(struct Camera* camera, float matrix[4][4], u16* perspectiveNormalize, float aspectRatio) {
-    float planeScalar = 1.0f;
-
-    if (camera->transform.position.y > camera->farPlane * 0.5f) {
-        planeScalar = 2.0f * camera->transform.position.y / camera->farPlane;
-    }
-
-    guPerspectiveF(matrix, perspectiveNormalize, camera->fov, aspectRatio, camera->nearPlane * planeScalar, camera->farPlane * planeScalar, 1.0f);
+    guPerspectiveF(matrix, perspectiveNormalize, camera->fov, aspectRatio, camera->nearPlane, camera->farPlane, 1.0f);
 }
 
 void cameraExtractClippingPlane(float viewPersp[4][4], struct Plane* output, int axis, float direction) {

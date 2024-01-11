@@ -125,10 +125,13 @@ void levelLoad(int index) {
 
     gCurrentLevel = levelFixPointers(metadata->levelDefinition, (char*)memory - metadata->segmentStart);
     gCurrentLevelIndex = index;
-    gQueuedLevel = NO_QUEUED_LEVEL;
 
     collisionSceneInit(&gCollisionScene, gCurrentLevel->collisionQuads, gCurrentLevel->collisionQuadCount, &gCurrentLevel->world);
     soundPlayerResume();
+}
+
+void levelClearQueuedLevel() {
+    gQueuedLevel = NO_QUEUED_LEVEL;
 }
 
 void levelQueueLoad(int index, struct Transform* relativeExitTransform, struct Vector3* relativeVelocity) {
@@ -136,7 +139,7 @@ void levelQueueLoad(int index, struct Transform* relativeExitTransform, struct V
         gQueuedLevel = gCurrentLevelIndex + 1;
 
         if (gQueuedLevel == LEVEL_COUNT) {
-            gQueuedLevel = MAIN_MENU;
+            gQueuedLevel = CREDITS_MENU;
         }
     } else {
         gQueuedLevel = index;
@@ -219,7 +222,7 @@ struct Location* levelGetLocation(short index) {
     return &gCurrentLevel->locations[index];
 }
 
-int levelGetChamberNumber(int levelIndex, int roomIndex){
+int getChamberDisplayNumberFromLevelIndex(int levelIndex, int roomIndex){
     switch(levelIndex){
         case 0:
             if (roomIndex <= 2)
@@ -252,13 +255,17 @@ int levelGetChamberNumber(int levelIndex, int roomIndex){
                 return 11;
             else
                 return 12;
+        case 8:
+            return 13;
+        case 9:
+            return 14;
         default:
             return 0;
     }
 }
 
-int chamberNumberGetLevel(int chamberIndex) {
-    switch (chamberIndex) {
+int getLevelIndexFromChamberDisplayNumber(int chamberNumber) {
+    switch (chamberNumber) {
         case 0:
         case 1:
             return 0;
@@ -280,6 +287,10 @@ int chamberNumberGetLevel(int chamberIndex) {
         case 11:
         case 12:
             return 7;
+        case 13:
+            return 8;
+        case 14:
+            return 9;
         default:
             return 0;
     }

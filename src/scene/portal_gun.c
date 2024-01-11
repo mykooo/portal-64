@@ -7,10 +7,14 @@
 #include "../levels/material_state.h"
 
 #include "../effects/effect_definitions.h"
+#include "./render_plan.h"
 
 #include "../../build/assets/models/grav_flare.h"
 #include "../../build/assets/models/portal_gun/v_portalgun.h"
 #include "../../build/assets/materials/static.h"
+
+// the portal gun is rendered with a different field of view than the scene
+#define FIRST_PERSON_POV_FOV    42.45f
 
 #define PORTAL_GUN_RECOIL_TIME (0.22f)
 
@@ -18,49 +22,39 @@
 
 #define PORTAL_GUN_MOI          0.00395833375f
 
-struct Vector3 gPortalGunOffset = {0.120957, -0.113587, -0.20916};
-struct Vector3 gPortalGunShootOffset = {0.120957, -0.113587, -0.08};
-struct Vector3 gPortalGunForward = {0.1f, -0.1f, 1.0f};
-struct Vector3 gPortalGunShootForward = {0.3f, -0.25f, 1.0f};
-struct Vector3 gPortalGunUp = {0.0f, 1.0f, 0.0f};
+#define PORTAL_GUN_SCALE        512.0f
 
-void portalGunCalcTargetPosition(struct PortalGun* portalGun, struct Transform* lookTransform, struct Vector3* gunPoint, int shootingPos) {
-    struct Vector3 forward;
-    struct Vector3 offset;
+struct Quaternion gFlipAroundY = {0.0f, 1.0f, 0.0f, 0.0f};
 
-    if (shootingPos){
-        forward = gPortalGunShootForward;
-        offset = gPortalGunShootOffset;
-    }else{
-        forward = gPortalGunForward;
-        offset = gPortalGunOffset;
-    }
+struct Transform gGunTransform = {
+    {0.0f, 0.0f, 0.0f},
+    {0.0f, 1.0f, 0.0f, 0.0f},
+    {1.0f, 1.0f, 1.0f},
+};
 
-    struct Quaternion relativeRotation;
-    quatLook(&forward, &gPortalGunUp, &relativeRotation);
-    quatMultiply(&lookTransform->rotation, &relativeRotation, &portalGun->rigidBody.transform.rotation);
-
-    quatMultVector(&lookTransform->rotation, &offset, gunPoint);
-}
-
-void portalGunInit(struct PortalGun* portalGun, struct Transform* at){
-    rigidBodyInit(&portalGun->rigidBody, 1.0f, PORTAL_GUN_MOI);
-    portalGun->rigidBody.transform = *at;
-    portalGun->rigidBody.transform.scale = gOneVec;
-    portalGun->rigidBody.currentRoom = 0;
-    portalGun->rigidBody.velocity = gZeroVec;
-    portalGun->rigidBody.angularVelocity = gZeroVec;
+void portalGunInit(struct PortalGun* portalGun, struct Transform* at, int isFreshStart){
+    skArmatureInit(&portalGun->armature, &portal_gun_v_portalgun_armature);
+    skAnimatorInit(&portalGun->animator, portal_gun_v_portalgun_armature.numberOfBones);
     portalGun->portalGunVisible = 0;
     portalGun->shootAnimationTimer = 0.0;
     portalGun->shootTotalAnimationTimer = 0.0;
-
-    portalGunCalcTargetPosition(portalGun, at, &portalGun->rigidBody.transform.position, 0);
 
     portalGun->projectiles[0].roomIndex = -1;
     portalGun->projectiles[1].roomIndex = -1;
 
     portalTrailInit(&portalGun->projectiles[0].trail);
     portalTrailInit(&portalGun->projectiles[1].trail);
+
+    portalGun->rotation = at->rotation;
+
+    if (isFreshStart) {
+        skAnimatorRunClip(&portalGun->animator, &portal_gun_v_portalgun_Armature_draw_clip, 0.0f, 0);
+        // the first time the scene renders, the animation clip hasn't started yet
+        // this just hides the gun offscreen so it doesn't show up for a single frame
+        portalGun->armature.pose[0].position.y = -1.0f;
+    } else {
+        skAnimatorRunClip(&portalGun->animator, &portal_gun_v_portalgun_Armature_idle_clip, 0.0f, 0);
+    } 
 }
 
 #define PORTAL_PROJECTILE_RADIUS    0.15f
@@ -115,8 +109,9 @@ void portalBallRender(struct PortalGunProjectile* projectile, struct RenderState
 }
 
 extern LookAt gLookAt;
+extern float getAspect();
 
-void portalGunRenderReal(struct PortalGun* portalGun, struct RenderState* renderState, struct Camera* fromCamera, int portalGunVisible) {
+void portalGunRenderReal(struct PortalGun* portalGun, struct RenderState* renderState, struct Camera* fromCamera, int lastFiredIndex) {
     struct MaterialState materialState;
     materialStateInit(&materialState, DEFAULT_INDEX);
     
@@ -132,25 +127,55 @@ void portalGunRenderReal(struct PortalGun* portalGun, struct RenderState* render
         portalBallRender(projectile, renderState, &materialState, &fromCamera->transform, i);
     }
 
-    if (!portalGunVisible) {
+    if (!portalGun->portalGunVisible) {
         return;
     }
 
-    portalGun->rigidBody.transform.scale = gOneVec;
-    Mtx* matrix = renderStateRequestMatrices(renderState, 1);
+    Mtx* matrix = renderStateRequestMatrices(renderState, 2);
 
     if (!matrix) {
         return;
     }
 
-    cameraModifyProjectionViewForPortalGun(fromCamera, renderState, PORTAL_GUN_NEAR_PLANE * SCENE_SCALE, (float)SCREEN_WD / (float)SCREEN_HT);
+    u16 perspectiveNormalize;
+    guPerspective(&matrix[1], &perspectiveNormalize, FIRST_PERSON_POV_FOV, getAspect(), 0.05f * SCENE_SCALE, 4.0f * SCENE_SCALE, 1.0f);
+    gSPMatrix(renderState->dl++, &matrix[1], G_MTX_PROJECTION | G_MTX_LOAD | G_MTX_NOPUSH);
 
     gSPLookAt(renderState->dl++, &gLookAt);
+    gDPPipeSync(renderState->dl++);
+    // set the portal indicator color
+    if (lastFiredIndex >= 0 && lastFiredIndex <= 1) {
+        struct Coloru8 color = gProjectileColor[lastFiredIndex];
+        gDPSetEnvColor(renderState->dl++, color.r, color.g, color.b, 255);
+    } else {
+        gDPSetEnvColor(renderState->dl++, 128, 128, 128, 255);
+    }
+
+    struct Quaternion relativeRotation;
+    struct Quaternion inverseCameraRotation;
+    quatConjugate(&fromCamera->transform.rotation, &inverseCameraRotation);
+    quatMultiply(&inverseCameraRotation, &portalGun->rotation, &relativeRotation);
+
+    quatMultiply(&relativeRotation, &gFlipAroundY, &gGunTransform.rotation);
     
-    transformToMatrixL(&portalGun->rigidBody.transform, matrix, 512);
-    gSPMatrix(renderState->dl++, matrix, G_MTX_MODELVIEW | G_MTX_PUSH | G_MTX_MUL);
-    gSPDisplayList(renderState->dl++, portal_gun_v_portalgun_model_gfx);
+    LookAt* lookAt = renderStateRequestLookAt(renderState);
+    *lookAt = gLookAt;
+
+    struct Vector3 lookDirection;
+    quatMultVector(&inverseCameraRotation, &gForward, &lookDirection);
+    vector3ToVector3u8(&lookDirection, (struct Vector3u8*)&lookAt->l[0].l.dir);
+
+    quatMultVector(&inverseCameraRotation, &gUp, &lookDirection);
+    vector3ToVector3u8(&lookDirection, (struct Vector3u8*)&lookAt->l[1].l.dir);
+
+    gSPLookAt(renderState->dl++, lookAt);
+    
+    transformToMatrixL(&gGunTransform, &matrix[0], PORTAL_GUN_SCALE);
+    gSPMatrix(renderState->dl++, &matrix[0], G_MTX_MODELVIEW | G_MTX_PUSH | G_MTX_MUL);
+    skRenderObject(&portalGun->armature, NULL, renderState);
     gSPPopMatrix(renderState->dl++, G_MTX_MODELVIEW);
+
+    gSPDisplayList(renderState->dl++, static_default);
 }
 
 #define NO_HIT_DISTANCE             20.0f
@@ -163,22 +188,17 @@ void portalGunUpdatePosition(struct PortalGun* portalGun, struct Player* player)
         struct Transform* transform = collisionSceneTransformToPortal(portalIndex);
 
         if (transform) {
-            quatMultVector(&transform->rotation, &portalGun->rigidBody.transform.position, &portalGun->rigidBody.transform.position);
+            struct Quaternion newRotation;
+            quatMultiply(&transform->rotation, &portalGun->rotation, &newRotation);
+            portalGun->rotation = newRotation;
         }
     }
 
-    struct Vector3 gunPoint;
-    portalGunCalcTargetPosition(portalGun, &player->lookTransform, &gunPoint, (player->flags & PlayerJustShotPortalGun) != 0);
-
-    struct Vector3 targetVelocity;
-    vector3Sub(&gunPoint, &portalGun->rigidBody.transform.position, &targetVelocity);
-    vector3Scale(&targetVelocity, &targetVelocity, (1.0f / FIXED_DELTA_TIME));
-
-    pointConstraintTargetVelocity(&portalGun->rigidBody, &targetVelocity, 20.0f, 0.5f);
-    rigidBodyUpdate(&portalGun->rigidBody);
+    quatLerp(&portalGun->rotation, &player->lookTransform.rotation, 0.45f, &portalGun->rotation);
 }
 
 void portalGunUpdate(struct PortalGun* portalGun, struct Player* player) {
+    skAnimatorUpdate(&portalGun->animator, portalGun->armature.pose, FIXED_DELTA_TIME);
     portalGunUpdatePosition(portalGun, player);
 
     if (player->flags & (PlayerHasFirstPortalGun | PlayerHasSecondPortalGun)) {
@@ -245,9 +265,9 @@ void portalGunUpdate(struct PortalGun* portalGun, struct Player* player) {
     }
 }
 
-struct Vector3 gPortalGunExit = {0.0f, 0.0f, 0.154008};
+struct Vector3 gPortalGunExit = {0.0f, 97.0f, 0.0f};
 
-void portalGunFire(struct PortalGun* portalGun, int portalIndex, struct Ray* ray, struct Vector3* playerUp, int roomIndex) {
+void portalGunFire(struct PortalGun* portalGun, int portalIndex, struct Ray* ray, struct Transform* lookTransform, struct Vector3* playerUp, int roomIndex) {
     struct PortalGunProjectile* projectile = &portalGun->projectiles[portalIndex];
 
     struct RaycastHit hit;
@@ -268,12 +288,19 @@ void portalGunFire(struct PortalGun* portalGun, int portalIndex, struct Ray* ray
     projectile->distance = 0.0f;
     projectile->maxDistance = hit.distance;
 
-    transformPoint(&portalGun->rigidBody.transform, &gPortalGunExit, &projectile->effectOffset);
+    skCalculateBonePosition(&portalGun->armature, PORTAL_GUN_V_PORTALGUN_BODY_BONE, &gPortalGunExit, &projectile->effectOffset);
+
+    projectile->effectOffset.x *= -(DEFAULT_CAMERA_FOV / (FIRST_PERSON_POV_FOV * PORTAL_GUN_SCALE));
+    projectile->effectOffset.y *= (DEFAULT_CAMERA_FOV / (FIRST_PERSON_POV_FOV * PORTAL_GUN_SCALE));
+    projectile->effectOffset.z *= -1.0f / PORTAL_GUN_SCALE;
+
+    quatMultVector(&portalGun->rotation, &projectile->effectOffset, &projectile->effectOffset);
 
     struct Vector3 fireFrom;
     vector3Add(&projectile->effectOffset, &ray->origin, &fireFrom);
 
     portalTrailPlay(&projectile->trail, &fireFrom, &hit.at);
+    skAnimatorRunClip(&portalGun->animator, &portal_gun_v_portalgun_Armature_fire1_clip, 0.0f, 0);
 }
 
 
@@ -298,4 +325,20 @@ int portalGunIsFiring(struct PortalGun* portalGun){
         return 1;
     }
     return 0;
+}
+
+void portalGunDraw(struct PortalGun* portalGun) {
+    skAnimatorRunClip(&portalGun->animator, &portal_gun_v_portalgun_Armature_draw_clip, 0.0f, 0);
+}
+
+void portalGunFizzle(struct PortalGun* portalGun) {
+    skAnimatorRunClip(&portalGun->animator, &portal_gun_v_portalgun_Armature_fizzle_clip, 0.0f, 0);
+}
+
+void portalGunPickup(struct PortalGun* portalGun) {
+    skAnimatorRunClip(&portalGun->animator, &portal_gun_v_portalgun_Armature_pickup_clip, 0.0f, 0);
+}
+
+void portalGunRelease(struct PortalGun* portalGun) {
+    skAnimatorRunClip(&portalGun->animator, &portal_gun_v_portalgun_Armature_release_clip, 0.0f, 0);
 }

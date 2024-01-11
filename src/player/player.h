@@ -29,6 +29,7 @@ enum PlayerFlags {
     PlayerJustDeniedSelect = (1 << 10),
     PlayerJustShotPortalGun = (1 << 11),
     PlayerInCutscene = (1 << 12),
+    PlayerIsInvincible = (1 << 13),
 };
 
 struct Player {
@@ -54,6 +55,7 @@ struct Player {
     float shakeTimer;
     short currentFoot; //left=0, right=1
     short passedThroughPortal;
+    float jumpImpulse;
 };
 
 void playerInit(struct Player* player, struct Location* startLocation, struct Vector3* velocity);
@@ -74,5 +76,7 @@ int playerIsGrabbing(struct Player* player);
 
 void playerSerialize(struct Serializer* serializer, SerializeAction action, struct Player* player);
 void playerDeserialize(struct Serializer* serializer, struct Player* player);
+void playerToggleJumpImpulse(struct Player* player, float newJumpImpulse);
+void playerToggleInvincibility(struct Player* player);
 
 #endif

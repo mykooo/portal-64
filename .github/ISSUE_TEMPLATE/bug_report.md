@@ -1,22 +1,18 @@
 ---
-name: Bug report
-about: Create a report to help us improve
+name: Bug Report
+about: Create a report for a minor bug.
 title: ''
-labels: ''
+labels: 'general bug'
 assignees: ''
 
 ---
 
 #### Version of the game
- - Version [e.g. v0.0.9]
+ - Version [e.g. v0.13.0]
+ - If applicable, commit id
 
 #### Original Hardware or Emulator?
-<!--
-  Check a box after creating the issue or like so:
-  - [X] This box is checked
--->
-- [ ] Original Hardware
-- [ ] Emulator (please specify)
+Specify target hardware or emulator where this bug happened.
 
 #### What is the bug?
 A clear and concise description of what the bug is.

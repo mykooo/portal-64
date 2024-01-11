@@ -33,14 +33,22 @@ void sceneAnimatorInit(struct SceneAnimator* sceneAnimator, struct AnimationInfo
     sceneAnimator->boneCount = 0;
 
     for (int i = 0; i < animatorCount; ++i) {
-        skArmatureInit(&sceneAnimator->armatures[i], &animationInfo[i].armature);
+        sceneAnimator->boneCount += animationInfo[i].armature.numberOfBones;
+    }
+
+    sceneAnimator->transforms = malloc(sizeof(struct Transform) * sceneAnimator->boneCount);
+
+    struct Transform* pose = sceneAnimator->transforms;
+
+    for (int i = 0; i < animatorCount; ++i) {
+        skArmatureInitWithPose(&sceneAnimator->armatures[i], &animationInfo[i].armature, pose);
         skAnimatorInit(&sceneAnimator->animators[i], animationInfo[i].armature.numberOfBones);
         sceneAnimator->state[i].playbackSpeed = 1.0f;
         sceneAnimator->state[i].soundId = SOUND_ID_NONE;
         sceneAnimator->state[i].flags = 0;
         vector3Scale(&sceneAnimator->armatures[i].pose[0].position, &sceneAnimator->state[i].lastPosition, 1.0f / SCENE_SCALE);
 
-        sceneAnimator->boneCount += animationInfo[i].armature.numberOfBones;
+        pose += animationInfo[i].armature.numberOfBones;
     }
 }
 

@@ -204,6 +204,9 @@ void cutsceneRunnerStartStep(struct CutsceneRunner* runner) {
         case CutsceneStepTypeDelay:
             runner->state.delay = step->delay;
             break;
+        case CutsceneStepTypeWaitForSignal:
+            runner->state.waitForSignal.currentFrame = step->waitForSignal.forFrames;
+            break;
         case CutsceneStepTypeOpenPortal:
         {
             struct Location* location = &gCurrentLevel->locations[step->openPortal.locationIndex];
@@ -286,6 +289,8 @@ void cutsceneRunnerStartStep(struct CutsceneRunner* runner) {
                 playerGivePortalGun(&gScene.player, PlayerHasSecondPortalGun);
             }
 
+            portalGunDraw(&gScene.portalGun);
+
             break;
         case CutsceneStepTypePointPedestal:
             for (unsigned i = 0; i < gScene.pedestalCount; ++i) {
@@ -317,6 +322,13 @@ void cutsceneRunnerStartStep(struct CutsceneRunner* runner) {
         case CutsceneStepRumble:
             rumblePakClipPlay(&gCutsceneRumbleWaves[step->rumble.rumbleLevel]);
             break;
+        case CutsceneStepActivateSignage:
+            for (int i = 0; i < gScene.signageCount; ++i) {
+                if (gScene.signage[i].testChamberNumber == step->activateSignage.testChamberIndex) {
+                    signageActivate(&gScene.signage[i]);
+                }
+            }
+            break;
         default:
     }
 }
@@ -339,7 +351,17 @@ int cutsceneRunnerUpdateCurrentStep(struct CutsceneRunner* runner) {
             runner->state.delay -= FIXED_DELTA_TIME;
             return runner->state.delay <= 0.0f;
         case CutsceneStepTypeWaitForSignal:
-            return signalsRead(step->waitForSignal.signalIndex);
+            if (signalsRead(step->waitForSignal.signalIndex)) {
+                if (runner->state.waitForSignal.currentFrame > 0) {
+                    --runner->state.waitForSignal.currentFrame;
+                } else {
+                    return 1;
+                }
+            } else {
+                runner->state.waitForSignal.currentFrame = step->waitForSignal.forFrames;
+            }
+
+            return 0;
         case CutsceneStepTypeWaitForCutscene:
             return !cutsceneIsRunning(&gCurrentLevel->cutscenes[step->cutscene.cutsceneIndex]);
         case CutsceneStepWaitForAnimation:
@@ -466,7 +488,7 @@ void cutscenesUpdateSounds() {
         int soundType = SoundTypeNone;
         int subtitleType = SubtitleTypeNone; 
         if (i == CH_GLADOS){
-            soundType = SoundTypeAll;
+            soundType = SoundTypeVoice;
             subtitleType = SubtitleTypeCloseCaption; 
         }else if (i == CH_MUSIC){
             soundType = SoundTypeMusic;

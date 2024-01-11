@@ -27,6 +27,7 @@ struct PortalSurface {
     u8 edgeCount;
     u8 vertexCount;
     u8 shouldCleanup;
+    u8 hasDecals;
 
     struct Vector3 right;
     struct Vector3 up;
@@ -59,7 +60,7 @@ void portalSurfaceCleanupQueueInit();
 void portalSurfacePreSwap(int portalToMove);
 int portalSurfaceStaticIndexForReplacement(int portalIndex);
 
-int portalSurfaceIsInside(struct PortalSurface* surface, struct Transform* portalAt);
+int portalSurfaceIsInside(struct PortalSurface* surface, struct Transform* portalAt, int portalIndex);
 
 int portalSurfaceGenerate(struct PortalSurface* surface, int surfaceIndex, struct Transform* portalAt, int portalIndex, struct Transform* otherPortalAt, struct PortalSurface* newSurface);
 

@@ -137,6 +137,7 @@ local function generate_cutscene_step(cutscene_name, step, step_index, label_loc
         result.type = sk_definition_writer.raw('CutsceneStepTypeWaitForSignal')
         result.waitForSignal = {
             signals.signal_index_for_name(step.args[1]),
+            tonumber(step.args[2] or "0"),
         }
     elseif step.command == "teleport_player" and #step.args >= 2 then
         result.type = sk_definition_writer.raw('CutsceneStepTypeTeleportPlayer')
@@ -235,6 +236,11 @@ local function generate_cutscene_step(cutscene_name, step, step_index, label_loc
     elseif step.command == "rumble" then
         result.type = sk_definition_writer.raw('CutsceneStepRumble')
         result.rumble = {
+            tonumber(step.args[1]),
+        }
+    elseif step.command == "activate_signage" then
+        result.type = sk_definition_writer.raw('CutsceneStepActivateSignage')
+        result.activateSignage = {
             tonumber(step.args[1]),
         }
     else

@@ -164,16 +164,20 @@ void portalSurfaceInverse(struct PortalSurface* surface, struct Vector2s16* inpu
     vector3AddScaled(output, &surface->right, (float)input->x / FIXED_POINT_SCALAR, output);
 }
 
-int portalSurfaceIsInside(struct PortalSurface* surface, struct Transform* portalAt) {
+int portalSurfaceIsInside(struct PortalSurface* surface, struct Transform* portalAt, int portalIndex) {
     int intersectionCount = 0;
 
     struct Vector3 portalForward;
     quatMultVector(&portalAt->rotation, &gForward, &portalForward);
 
     struct Vector3 surfaceNormal;
-    vector3Cross(&surface->up, &surface->right, &surfaceNormal);
+    vector3Cross(&surface->right, &surface->up, &surfaceNormal);
 
-    float normal = fabsf(vector3Dot(&portalForward, &surfaceNormal));
+    float normal = vector3Dot(&portalForward, &surfaceNormal);
+
+    if (portalIndex == 0) {
+        normal = -normal;
+    }
 
     if (normal < 0.7f) {
         return 0;
@@ -268,7 +272,8 @@ int portalSurfaceAdjustPosition(struct PortalSurface* surface, struct Transform*
 
     for (iteration = 0; iteration < MAX_POS_ADJUST_ITERATIONS; ++iteration) {
         int minOverlap = PORTAL_SURFACE_OVERLAP;
-        struct Vector2s16 minOverlapOffset;
+        int minIsOutside = 0;
+        struct Vector2s16 minOverlapOffset = {{{0, 0}}};
 
         struct Vector2s16 portalMin;
         portalMin.x = output->x - halfSize.x;
@@ -302,8 +307,12 @@ int portalSurfaceAdjustPosition(struct PortalSurface* surface, struct Transform*
                 continue;
             }
 
+            struct Vector2s16 edgeDir;
+            vector2s16Sub(&b, &a, &edgeDir);
+
             struct Vector2s16 offset;
             int distance = portalMax.x - edgeMin.x;
+            int isOutside = edgeDir.y < 0;
             offset.x = -distance;
             offset.y = 0;
 
@@ -313,6 +322,7 @@ int portalSurfaceAdjustPosition(struct PortalSurface* surface, struct Transform*
                 distance = distanceCheck;
                 offset.x = distance;
                 offset.y = 0;
+                isOutside = edgeDir.y > 0;
             }
 
             distanceCheck = portalMax.y - edgeMin.y;
@@ -321,6 +331,7 @@ int portalSurfaceAdjustPosition(struct PortalSurface* surface, struct Transform*
                 distance = distanceCheck;
                 offset.x = 0;
                 offset.y = -distance;
+                isOutside = edgeDir.x > 0;
             }
 
             distanceCheck = edgeMax.y - portalMin.y;
@@ -329,12 +340,18 @@ int portalSurfaceAdjustPosition(struct PortalSurface* surface, struct Transform*
                 distance = distanceCheck;
                 offset.x = 0;
                 offset.y = distance;
+                isOutside = edgeDir.x < 0;
             }
 
             if (distance < minOverlap) {
                 minOverlap = distance;
+                minIsOutside = isOutside;
                 minOverlapOffset = offset;
             }
+        }
+
+        if (minIsOutside) {
+            return 0;
         }
 
         if (minOverlap == PORTAL_SURFACE_OVERLAP) {

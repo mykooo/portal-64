@@ -43,6 +43,11 @@ void mainMenuInit(struct GameMenu* gameMenu) {
     gScene.camera.fov = 56.0f;
 
     mainMenuPlayAmbientSound();
+
+    for (int i = 0; i < gScene.clockCount; ++i) {
+        // this shows the pause time for the main menu
+        gScene.clocks[i].timeLeft = -1.0f;
+    }
 }
 
 void mainMenuUpdate(struct GameMenu* gameMenu) {
@@ -62,6 +67,16 @@ void mainMenuUpdate(struct GameMenu* gameMenu) {
     gameMenuUpdate(gameMenu);
     
     mainMenuPlayAmbientSound();
+
+    if (gScene.animator.animators[0].currentTime > 5.0f) {
+        for (int i = 0; i < gScene.signageCount; ++i) {
+            signageActivate(&gScene.signage[i]);
+        }
+    }
+
+    for (int i = 0; i < gScene.signageCount; ++i) {
+        signageUpdate(&gScene.signage[i]);
+    }
 }
 
 extern Lights1 gSceneLights;
@@ -85,7 +100,7 @@ void mainMenuRender(struct GameMenu* gameMenu, struct RenderState* renderState, 
     Mtx* staticMatrices = sceneAnimatorBuildTransforms(&gScene.animator, renderState);
 
     renderPlanBuild(&renderPlan, &gScene, renderState);
-    renderPlanExecute(&renderPlan, &gScene, staticMatrices, renderState);
+    renderPlanExecute(&renderPlan, &gScene, staticMatrices, gScene.animator.transforms, renderState, task);
 
     gameMenuRender(gameMenu, renderState, task);
 }

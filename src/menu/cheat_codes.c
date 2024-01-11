@@ -3,11 +3,25 @@
 #include "../build/src/audio/clips.h"
 #include "../audio/soundplayer.h"
 #include "../scene/scene.h"
+#include "../build/src/audio/clips.h"
+#include "../savefile/savefile.h"
 
 struct CheatCodePattern gCheatCodes[CheatCodeCount] = {
     [CheatCodeUnlockGun] = {
         {'u', 'u', 'd', 'd', 'l', 'r', 'l', 'r'},
         SOUNDS_01_PART1_GET_PORTAL_GUN_1,
+    },
+    [CheatCodeHighJump] = {
+        {'u', 'd', 'u', 'd', 'u', 'd', 'r', 'r'},
+        SOUNDS_BUTTONCLICKRELEASE,
+    },
+    [CheatCodeInvincibility] = {
+        {'u', 'd', 'u', 'd', 'u', 'd', 'l', 'l'},
+        SOUNDS_BUTTONCLICKRELEASE,
+    },
+    [CheatCodeAllLevels] = {
+        {'u', 'r', 'd', 'l', 'u', 'r', 'd', 'l'},
+        SOUNDS_BUTTONCLICKRELEASE,
     },
 };
 
@@ -23,6 +37,16 @@ void cheatCodeApply(enum CheatCode cheat) {
     switch (cheat) {
         case CheatCodeUnlockGun:
             playerGivePortalGun(&gScene.player, PlayerHasFirstPortalGun | PlayerHasSecondPortalGun);
+            portalGunDraw(&gScene.portalGun);
+            break;
+        case CheatCodeHighJump:
+            playerToggleJumpImpulse(&gScene.player, 6.5f);
+            break;
+        case CheatCodeInvincibility:
+            playerToggleInvincibility(&gScene.player);
+            break;
+        case CheatCodeAllLevels:
+            savefileMarkChapterProgress(7);
             break;
         case CheatCodeCount:
             break;

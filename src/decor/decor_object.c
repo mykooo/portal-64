@@ -104,7 +104,7 @@ void decorObjectInit(struct DecorObject* object, struct DecorObjectDefinition* d
     object->playingSound = SOUND_ID_NONE;
 }
 
-void decorObjectClenaup(struct DecorObject* decorObject) {
+void decorObjectCleanup(struct DecorObject* decorObject) {
     dynamicSceneRemove(decorObject->dynamicId);
     collisionSceneRemoveDynamicObject(&decorObject->collisionObject);
     if ((decorObject->playingSound != SOUND_ID_NONE) && (soundPlayerIsPlaying(decorObject->playingSound))) {
@@ -113,7 +113,7 @@ void decorObjectClenaup(struct DecorObject* decorObject) {
 }
 
 void decorObjectDelete(struct DecorObject* decorObject) {
-    decorObjectClenaup(decorObject);
+    decorObjectCleanup(decorObject);
     free(decorObject);
 }
 
@@ -187,7 +187,7 @@ int decorObjectUpdate(struct DecorObject* decorObject) {
     }
 
     if (decorObject->definition->soundClipId != -1 && decorObject->playingSound == SOUND_ID_NONE && decorObject->fizzleTime == 0.0f && !(decorObject->definition->flags & DecorObjectFlagsMuted)) {
-        decorObject->playingSound = soundPlayerPlay(decorObject->definition->soundClipId, 1.0f, 1.0f, &decorObject->rigidBody.transform.position, &decorObject->rigidBody.velocity, SoundTypeAll);
+        decorObject->playingSound = soundPlayerPlay(decorObject->definition->soundClipId, 0.5f, 1.0f, &decorObject->rigidBody.transform.position, &decorObject->rigidBody.velocity, SoundTypeAll);
     }
 
     dynamicSceneSetRoomFlags(decorObject->dynamicId, ROOM_FLAG_FROM_INDEX(decorObject->rigidBody.currentRoom));

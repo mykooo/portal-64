@@ -9,11 +9,20 @@ hl_gameui_whitelist = {
     "GAMEUI_ASPECTWIDE",
     "GAMEUI_AUDIO",
     "GAMEUI_AUTOSAVE",
+    "GAMEUI_CANCEL",
     "GAMEUI_CAPTIONING",
     "GAMEUI_CHAPTER",
+    "GAMEUI_CONFIRMDELETESAVEGAME_INFO",
+    "GAMEUI_CONFIRMDELETESAVEGAME_OK",
+    "GAMEUI_CONFIRMDELETESAVEGAME_TITLE",
+    "GAMEUI_CONFIRMOVERWRITESAVEGAME_INFO",
+    "GAMEUI_CONFIRMOVERWRITESAVEGAME_OK",
+    "GAMEUI_CONFIRMOVERWRITESAVEGAME_TITLE",
+    "GAMEUI_DELETE",
     "GAMEUI_GAMEMENU_QUIT",
     "GAMEUI_GAMEMENU_RESUMEGAME",
     "GAMEUI_JOYSTICKINVERTED",
+    "GAMEUI_LOAD",
     "GAMEUI_LOADGAME",
     "GAMEUI_MUSICVOLUME",
     "GAMEUI_NEWGAME",
@@ -23,6 +32,7 @@ hl_gameui_whitelist = {
     "GAMEUI_PORTAL",
     "GAMEUI_PORTALDEPTHLABEL",
     "GAMEUI_PORTALFUNNEL",
+    "GAMEUI_SAVE",
     "GAMEUI_SAVEGAME",
     "GAMEUI_SOUNDEFFECTVOLUME",
     "GAMEUI_SUBTITLES",
@@ -56,19 +66,20 @@ valve_whitelist = {
     "VALVE_MISCELLANEOUS_KEYBOARD_KEYS_TITLE",
 }
 
-language_translations = {
-	'brazilian': 'Brasileiro',
+#include only languages the font supports (ingame lists display in this defined order)
+language_translations = {	
+    'english': 'English',
+    'brazilian': 'Brasileiro',
     'bulgarian': 'Български език',
     'czech': 'Čeština',
     'danish': 'Dansk',
     'german': 'Deutsch',
-    'english': 'English',
     'spanish': 'Español',
-	'greek': 'Ελληνικά',
+    'latam': 'Español americana',
+    'greek': 'Ελληνικά',
     'french': 'Français',
     'italian': 'Italiano',
     'polish': 'Język polski',
-    'latam': 'Español americana',
     'hungarian': 'Magyar nyelv',
     'dutch': 'Nederlands',
     'norwegian': 'Norsk',
@@ -78,7 +89,7 @@ language_translations = {
     'finnish': 'Suomi',
     'swedish': 'Svenska',
     'turkish': 'Türkçe',
-	'ukrainian': 'Українська мова',
+    'ukrainian': 'Українська мова',
 }
 
 def get_supported_characters():
@@ -129,16 +140,16 @@ def get_caption_keys_values_language(lines):
             if len(keyval) != 2:
                 continue
 
-        if "[$WIN32]" in keyval[1]:
+        if "[$X360]" in keyval[1]:
             continue
         if "[english]" in keyval[0] or 'commentary' in keyval[0]:
             continue
 
-        if "[$X360]" in keyval[1]:
-            keyval[1] = keyval[1].replace("[$X360]", "")
+        if "[$WIN32]" in keyval[1]:
+            keyval[1] = keyval[1].replace("[$WIN32]", "")
 
         key = keyval[0].replace('"', "").replace(".", "_").replace("-", "_").replace('\\', "_").replace('#', "").upper()
-        val = keyval[1].replace('"', "").replace("\n", "").replace("\\", "").strip()
+        val = keyval[1].replace('"', "").replace("\n", "").replace("\\n", " ").replace("\\", "").strip()
         val = re.sub(r'\<clr.+\>','',val)
         val = re.sub(r'\<norepeat.+\>','',val)
         val = val.replace("<sfx>", "")
@@ -292,8 +303,7 @@ def make_overall_subtitles_sourcefile(language_list):
 
 def read_translation_file(filepath, encoding='utf-16-le'):
     if not exists(filepath):
-        print(f"not found {filepath}")
-        return [], [], ''
+        raise Exception(f"not found {filepath}")
 
     lines = []
     
@@ -333,57 +343,51 @@ def process_all_closecaption_files(dir, language_names):
     for language_name in language_names:
         filename = f"closecaption_{language_name}.txt"
 
-        try:  
-            filepath = os.path.join(dir, filename)
+        filepath = os.path.join(dir, filename)
 
-            k,v,l = read_translation_file(filepath)
+        k,v,l = read_translation_file(filepath)
 
-            gamepad_k, gamepad_v, _ = read_translation_file(f"vpk/Portal/hl2/resource/gameui_{language_name}.txt")
-            gamepad_k, gamepad_v = filter_whitelist(gamepad_k, gamepad_v, hl_gameui_whitelist)
+        gamepad_k, gamepad_v, _ = read_translation_file(f"vpk/Portal/hl2/resource/gameui_{language_name}.txt")
+        gamepad_k, gamepad_v = filter_whitelist(gamepad_k, gamepad_v, hl_gameui_whitelist)
 
-            portal_k, portal_v, _ = read_translation_file(f"vpk/Portal/portal/resource/portal_{language_name}.txt")
-            portal_k, portal_v = filter_whitelist(portal_k, portal_v, portal_whitelist)
+        portal_k, portal_v, _ = read_translation_file(f"vpk/Portal/portal/resource/portal_{language_name}.txt")
+        portal_k, portal_v = filter_whitelist(portal_k, portal_v, portal_whitelist)
 
-            valve_k, valve_v, _ = read_translation_file(f"vpk/Portal/hl2/resource/valve_{language_name}.txt")
-            valve_k, valve_v = filter_whitelist(valve_k, valve_v, valve_whitelist)
+        valve_k, valve_v, _ = read_translation_file(f"vpk/Portal/hl2/resource/valve_{language_name}.txt")
+        valve_k, valve_v = filter_whitelist(valve_k, valve_v, valve_whitelist)
 
-            extra_k, extra_v, _ = read_translation_file(f"assets/translations/extra_{language_name}.txt", encoding='utf-8')
+        extra_k, extra_v, _ = read_translation_file(f"assets/translations/extra_{language_name}.txt", encoding='utf-8')
 
-            k = k + gamepad_k + portal_k + valve_k + extra_k
-            v = v + gamepad_v + portal_v + valve_v + extra_v
+        k = k + gamepad_k + portal_k + valve_k + extra_k
+        v = v + gamepad_v + portal_v + valve_v + extra_v
 
-            if not key_order:
-                header_lines = make_SubtitleKey_headerlines(k)
-                key_order = k
-                default_values = v
-            else:
-                index_mapping = {}
-                for idx, x in enumerate(k):
-                    index_mapping[x] = idx
+        if not key_order:
+            header_lines = make_SubtitleKey_headerlines(k)
+            key_order = k
+            default_values = v
+        else:
+            index_mapping = {}
+            for idx, x in enumerate(k):
+                index_mapping[x] = idx
 
-                new_values = []
+            new_values = []
 
-                for idx, key in enumerate(key_order):
-                    if key in index_mapping:
-                        new_values.append(v[index_mapping[key]])
-                    else:
-                        new_values.append(default_values[idx])
+            for idx, key in enumerate(key_order):
+                if key in index_mapping:
+                    new_values.append(v[index_mapping[key]])
+                else:
+                    new_values.append(default_values[idx])
 
-                v = new_values
+            v = new_values
 
-            values_list.append(v)
-            language_list.append(l)
-            
-            language_with_values_list.append({
-                'value': v,
-                'name': l,
-            })
-            print(filename, " - PASSED")
-        except Exception as e:
-            print(e)
-            print(filename, " - FAILED")
-            raise
-            continue
+        values_list.append(v)
+        language_list.append(l)
+        
+        language_with_values_list.append({
+            'value': v,
+            'name': l,
+        })
+        print(filename, " - PASSED")
 
     good_characters = get_supported_characters()
     used_characters = set()
@@ -407,6 +411,22 @@ def process_all_closecaption_files(dir, language_names):
     make_overall_subtitles_header(header_lines, language_list, len(language_with_values_list[0]['value']), max_message_length)
     make_overall_subtitles_sourcefile(language_list)
 
+dir = "vpk/Portal/portal/resource"
 
+#actually available supported languages
+available_languages_list = []
+ordered_language_list = []
 
-process_all_closecaption_files("vpk/Portal/portal/resource", sys.argv[1:])
+lst = os.listdir(dir)
+lst.sort()
+for filename in lst:
+    for language in language_translations:
+        if language in filename:
+            if language not in available_languages_list:
+                available_languages_list.append(language)
+
+for language in language_translations:
+    if language in available_languages_list:
+        ordered_language_list.append(language)
+
+process_all_closecaption_files(dir, ordered_language_list)

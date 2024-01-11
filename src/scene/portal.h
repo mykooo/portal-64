@@ -17,6 +17,7 @@
 enum PortalFlags {
     PortalFlagsOddParity = (1 << 0),
     PortalFlagsPlayerPortal = (1 << 2),
+    PortalFlagsZOffset = (1 << 3),
 };
 
 struct Portal {
@@ -55,7 +56,7 @@ void portalUpdate(struct Portal* portal, int isOpen);
 
 void portalCalculateBB(struct Transform* portalTransform, struct Box3D* bb);
 
-int portalAttachToSurface(struct Portal* portal, struct PortalSurface* surface, int surfaceIndex, struct Transform* portalAt, int just_checking);
+int portalAttachToSurface(struct Portal* portal, struct PortalSurface* surface, int surfaceIndex, struct Transform* portalAt, int just_checking, int portalIndex);
 void portalCheckForHoles(struct Portal* portals);
 
 // data should be of type struct Transform

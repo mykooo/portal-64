@@ -19,6 +19,9 @@
 #include "../build/assets/models/portal/portal_orange.h"
 #include "../build/assets/models/portal/portal_orange_face.h"
 
+// if a portal takes up a small portion of the screen it is worth to clear
+// the zbuffer after drawing the contents instead of 
+#define PORTAL_AREA_CLEAR_THRESHOLD (100 * 100)
 #define MIN_VP_WIDTH 64
 #define CAMERA_CLIPPING_RADIUS  0.2f
 #define PORTAL_CLIPPING_OFFSET  0.1f
@@ -93,6 +96,7 @@ void renderPropsInit(struct RenderProps* props, struct Camera* camera, float asp
     props->exitPortalIndex = NO_PORTAL;
     props->fromRoom = roomIndex;
     props->parentStageIndex = -1;
+    props->shouldClearZBuffer = 0;
 
     props->clippingPortalIndex = -1;
 
@@ -113,7 +117,7 @@ void renderPropsInit(struct RenderProps* props, struct Camera* camera, float asp
 
 void renderPlanFinishView(struct RenderPlan* renderPlan, struct Scene* scene, struct RenderProps* properties, struct RenderState* renderState);
 
-inline static float getAspect()
+float getAspect()
 {
     return (gSaveData.controls.flags & ControlSaveWideScreen) != 0 ? ASPECT_WIDE : ASPECT_SD;
 }
@@ -277,6 +281,8 @@ int renderPlanPortal(struct RenderPlan* renderPlan, struct Scene* scene, struct 
         }
     }
 
+    next->shouldClearZBuffer = (next->maxX - next->minX) * (next->maxY - next->minY) < PORTAL_AREA_CLEAR_THRESHOLD;
+
     next->currentDepth = current->currentDepth - 1;
     next->viewport = renderPropsBuildViewport(next, renderState);
 
@@ -363,7 +369,6 @@ int renderShouldRenderOtherPortal(struct Scene* scene, int visiblePortal, struct
 }
 
 void renderPlanFinishView(struct RenderPlan* renderPlan, struct Scene* scene, struct RenderProps* properties, struct RenderState* renderState) {
-    
     staticRenderDetermineVisibleRooms(&properties->cameraMatrixInfo.cullingInformation, properties->fromRoom, &properties->visiblerooms);
 
     struct Ray cameraRay;
@@ -384,12 +389,13 @@ void renderPlanFinishView(struct RenderPlan* renderPlan, struct Scene* scene, st
 
     struct RenderProps* prevSibling = NULL;
 
-    float furthestPortal = 0.0f;
+    int childrenNeedZBuffer = 0;
 
     for (int i = 0; i < 2; ++i) {
         if (properties->exitPortalIndex != closerPortal && 
             renderShouldRenderOtherPortal(scene, closerPortal, properties) &&
             staticRenderIsRoomVisible(properties->visiblerooms, gCollisionScene.portalRooms[closerPortal])) {
+
             int planResult = renderPlanPortal(
                 renderPlan,
                 scene,
@@ -401,10 +407,8 @@ void renderPlanFinishView(struct RenderPlan* renderPlan, struct Scene* scene, st
 
             properties->portalRenderType |= planResult;
 
-            if (planResult) {
-                float portalDistance = rayDetermineDistance(&cameraRay, &gCollisionScene.portalTransforms[closerPortal]->position) + 1.0f;
-
-                furthestPortal = MAX(furthestPortal, portalDistance);
+            if (planResult && prevSibling && !prevSibling->shouldClearZBuffer) {
+                childrenNeedZBuffer = 1;
             }
         }
 
@@ -412,7 +416,9 @@ void renderPlanFinishView(struct RenderPlan* renderPlan, struct Scene* scene, st
         otherPortal = 1 - otherPortal;
     }
 
-    properties->maxZOverlap = matrixNormalizedZValue(-furthestPortal * SCENE_SCALE, properties->camera.nearPlane, properties->camera.farPlane);
+    if (childrenNeedZBuffer) {
+        properties->shouldClearZBuffer = 0;
+    }
 }
 
 void renderPlanAdjustViewportDepth(struct RenderPlan* renderPlan) {
@@ -424,6 +430,10 @@ void renderPlanAdjustViewportDepth(struct RenderPlan* renderPlan) {
 
     for (int i = 0; i < renderPlan->stageCount; ++i) {
         struct RenderProps* current = &renderPlan->stageProps[i];
+
+        if (current->shouldClearZBuffer) {
+            continue;
+        }
 
         float depth = current->camera.farPlane - current->camera.nearPlane;
 
@@ -454,8 +464,20 @@ void renderPlanAdjustViewportDepth(struct RenderPlan* renderPlan) {
 
     for (int i = 0; i < renderPlan->stageCount; ++i) {
         struct RenderProps* current = &renderPlan->stageProps[i];
-        short minZ = zBufferBoundary[current->currentDepth + 1];
-        short maxZ = zBufferBoundary[current->currentDepth];
+        int useDepth = current->currentDepth;
+
+        struct RenderProps* depthSearch = current;
+
+        while (depthSearch && depthSearch->shouldClearZBuffer) {
+            depthSearch = &renderPlan->stageProps[depthSearch->parentStageIndex];
+        }
+
+        if (depthSearch) {
+            useDepth = depthSearch->currentDepth;
+        }
+
+        short minZ = zBufferBoundary[useDepth + 1];
+        short maxZ = zBufferBoundary[useDepth];
 
         current->viewport->vp.vscale[2] = (maxZ - minZ) >> 1;
         current->viewport->vp.vtrans[2] = (maxZ + minZ) >> 1;
@@ -478,7 +500,7 @@ void renderPlanBuild(struct RenderPlan* renderPlan, struct Scene* scene, struct 
 
 extern LookAt gLookAt;
 
-void renderPlanExecute(struct RenderPlan* renderPlan, struct Scene* scene, Mtx* staticTransforms, struct RenderState* renderState) {
+void renderPlanExecute(struct RenderPlan* renderPlan, struct Scene* scene, Mtx* staticMatrices, struct Transform* staticTransforms, struct RenderState* renderState, struct GraphicsTask* task) {
     struct DynamicRenderDataList* dynamicList = dynamicRenderListNew(renderState, MAX_DYNAMIC_SCENE_OBJECTS);
 
     for (int i = 0; i < renderPlan->stageCount; ++i) {
@@ -563,13 +585,15 @@ void renderPlanExecute(struct RenderPlan* renderPlan, struct Scene* scene, Mtx* 
                         faceModel = portal_portal_orange_face_model_gfx;
                         portalModel = portal_portal_orange_model_gfx;
                     }
-
-                    // render the portal cover with a slightly offset z
-                    // so it doesn't z fight with the surface it is attached to
-                    Vp* vpWithOffset = renderStateRequestViewport(renderState);
-                    *vpWithOffset = *current->viewport;
-                    vpWithOffset->vp.vtrans[2] -= 1;
-                    gSPViewport(renderState->dl++, vpWithOffset);
+                    
+                    if (portal->flags & PortalFlagsZOffset) {
+                        // render the portal cover with a slightly offset z
+                        // so it doesn't z fight with the surface it is attached to
+                        Vp* vpWithOffset = renderStateRequestViewport(renderState);
+                        *vpWithOffset = *current->viewport;
+                        vpWithOffset->vp.vtrans[2] -= 2;
+                        gSPViewport(renderState->dl++, vpWithOffset);
+                    }
                     gSPDisplayList(renderState->dl++, faceModel);
                     gSPViewport(renderState->dl++, current->viewport);
                     if (current->previousProperties == NULL && portalIndex == renderPlan->clippedPortalIndex && renderPlan->nearPolygonCount) {
@@ -594,9 +618,14 @@ void renderPlanExecute(struct RenderPlan* renderPlan, struct Scene* scene, Mtx* 
             current->visiblerooms, 
             dynamicList, 
             stageIndex, 
+            staticMatrices,
             staticTransforms, 
             renderState
         );
+
+        if (current->shouldClearZBuffer) {
+            graphicsTaskClearZBuffer(task, current->minX, current->minY, current->maxX, current->maxY);
+        }
     }
 
     dynamicRenderListFree(dynamicList);

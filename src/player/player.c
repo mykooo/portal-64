@@ -40,6 +40,21 @@
 #define FUNNEL_MIN_DOWN_VEL -2.25f
 #define FUNNEL_MAX_HORZ_VEL 7.0f
 
+#define PLAYER_SPEED    (150.0f / 64.0f)
+#define PLAYER_ACCEL    (20.0f)
+#define PLAYER_AIR_ACCEL    (5.875f)
+#define PLAYER_FAST_AIR_ACCEL    (2.0f)
+#define PLAYER_STOP_ACCEL    (5.875f)
+#define PLAYER_SLIDE_ACCEL    (40.0f)
+
+#define MIN_ROTATE_RATE (M_PI * 0.5f)
+#define MAX_ROTATE_RATE (M_PI * 3.5f)
+
+#define MIN_ROTATE_RATE_DELTA (M_PI * 0.06125f)
+#define MAX_ROTATE_RATE_DELTA MAX_ROTATE_RATE
+
+#define JUMP_IMPULSE   2.7f
+
 struct Vector3 gGrabDistance = {0.0f, 0.0f, -1.5f};
 struct Vector3 gCameraOffset = {0.0f, 0.0f, 0.0f};
 
@@ -142,6 +157,7 @@ void playerInit(struct Player* player, struct Location* startLocation, struct Ve
     player->shakeTimer = 0.0f;
     player->currentFoot = 0;
     player->passedThroughPortal = 0;
+    player->jumpImpulse = JUMP_IMPULSE;
 
     if (gCurrentLevelIndex == 0){
         player->flags &= ~PlayerHasFirstPortalGun;
@@ -170,20 +186,6 @@ void playerInit(struct Player* player, struct Location* startLocation, struct Ve
 
     dynamicSceneSetRoomFlags(player->dynamicId, ROOM_FLAG_FROM_INDEX(player->body.currentRoom));
 }
-
-#define PLAYER_SPEED    (150.0f / 64.0f)
-#define PLAYER_ACCEL    (5.875f)
-#define PLAYER_AIR_ACCEL    (1.875f)
-#define PLAYER_STOP_ACCEL    (5.875f)
-#define PLAYER_SLIDE_ACCEL    (40.0f)
-
-#define MIN_ROTATE_RATE (M_PI * 0.5f)
-#define MAX_ROTATE_RATE (M_PI * 3.5f)
-
-#define MIN_ROTATE_RATE_DELTA (M_PI * 0.06125f)
-#define MAX_ROTATE_RATE_DELTA MAX_ROTATE_RATE
-
-#define JUMP_IMPULSE   2.7f
 
 void playerHandleCollision(struct Player* player) {
     for (struct ContactManifold* contact = contactSolverNextManifold(&gContactSolver, &player->collisionObject, NULL);
@@ -246,16 +248,17 @@ void playerSetGrabbing(struct Player* player, struct CollisionObject* grabbing) 
         player->grabConstraint.object = NULL;
         contactSolverRemovePointConstraint(&gContactSolver, &player->grabConstraint);
         player->grabbingThroughPortal = PLAYER_GRABBING_THROUGH_NOTHING;
-    }
-    else if (grabbing && !player->grabConstraint.object) {
+    } else if (grabbing && !player->grabConstraint.object) {
         pointConstraintInit(&player->grabConstraint, grabbing, 8.0f, 5.0f, 1.0f);
         contactSolverAddPointConstraint(&gContactSolver, &player->grabConstraint);
         hudResolvePrompt(&gScene.hud, CutscenePromptTypePickup);
+        portalGunPickup(&gScene.portalGun);
     } else if (!grabbing && player->grabConstraint.object) {
         player->grabConstraint.object = NULL;
         contactSolverRemovePointConstraint(&gContactSolver, &player->grabConstraint);
         hudResolvePrompt(&gScene.hud, CutscenePromptTypeDrop);
         player->grabbingThroughPortal = PLAYER_GRABBING_THROUGH_NOTHING;
+        portalGunRelease(&gScene.portalGun);
     } else if (grabbing != player->grabConstraint.object) {
         pointConstraintInit(&player->grabConstraint, grabbing, 8.0f, 5.0f, 1.0f);
     }
@@ -458,6 +461,10 @@ void playerUpdateSpeedSound(struct Player* player) {
 }
 
 void playerKill(struct Player* player, int isUnderwater) {
+    if (player->flags & PlayerIsInvincible){
+        return;
+    }
+
     if (isUnderwater) {
         player->flags |= PlayerIsUnderwater;
         player->drownTimer = DROWN_TIME;
@@ -687,7 +694,7 @@ void playerUpdate(struct Player* player) {
     int isDead = playerIsDead(player);
 
     if (!isDead && (player->flags & PlayerFlagsGrounded) && controllerActionGet(ControllerActionJump)) {
-        player->body.velocity.y += JUMP_IMPULSE;
+        player->body.velocity.y += player->jumpImpulse;
         if (!vector3IsZero(&player->lastAnchorToVelocity) && player->anchoredTo != NULL){
             player->body.velocity.x += player->lastAnchorToVelocity.x;
             player->body.velocity.z += player->lastAnchorToVelocity.z;
@@ -753,19 +760,31 @@ void playerUpdate(struct Player* player) {
 
     targetVelocity.y = player->body.velocity.y;
     if (!vector3IsZero(&player->lastAnchorToVelocity) && !(player->flags & PlayerFlagsGrounded) && !(player->anchoredTo)){
-        targetVelocity.x += player->lastAnchorToVelocity.x/FIXED_DELTA_TIME;
-        targetVelocity.z += player->lastAnchorToVelocity.z/FIXED_DELTA_TIME;
+        targetVelocity.x += player->lastAnchorToVelocity.x;
+        targetVelocity.z += player->lastAnchorToVelocity.z;
     }
 
     float velocityDot = vector3Dot(&player->body.velocity, &targetVelocity);
     int isAccelerating = velocityDot > 0.0f;
     float acceleration = 0.0f;
-    float velocitySqrd = vector3MagSqrd(&player->body.velocity);
-    int isFast = velocitySqrd >= PLAYER_SPEED * PLAYER_SPEED;
+    float horizontalVelocitySqrd = player->body.velocity.x * player->body.velocity.x + player->body.velocity.z * player->body.velocity.z;
+    int isFast = horizontalVelocitySqrd >= PLAYER_SPEED * PLAYER_SPEED;
     playerUpdateSpeedSound(player);
 
     if (!(player->flags & PlayerFlagsGrounded)) {
-        acceleration = PLAYER_AIR_ACCEL * FIXED_DELTA_TIME;
+        if (isFast) {
+            struct Vector2 movementCenter;
+            movementCenter.x = player->body.velocity.x;
+            movementCenter.y = player->body.velocity.z;
+            float horizontalVelocity = sqrtf(horizontalVelocitySqrd);
+            vector2Scale(&movementCenter, (horizontalVelocity - PLAYER_SPEED) / horizontalVelocity, &movementCenter);
+            targetVelocity.x += movementCenter.x;
+            targetVelocity.z += movementCenter.y;
+
+            acceleration = PLAYER_FAST_AIR_ACCEL * FIXED_DELTA_TIME;
+        } else {
+            acceleration = PLAYER_AIR_ACCEL * FIXED_DELTA_TIME;
+        }
     } else if (isFast) {
         acceleration = PLAYER_SLIDE_ACCEL * FIXED_DELTA_TIME;
     } else if (isAccelerating) {
@@ -793,12 +812,14 @@ void playerUpdate(struct Player* player) {
         transformPoint(&player->anchoredTo->transform, &player->relativeAnchor, &newAnchor);
         vector3Add(&player->body.transform.position, &newAnchor, &player->body.transform.position);
         vector3Sub(&player->body.transform.position, &player->lastAnchorPoint, &player->body.transform.position);
+    } else {
+        player->lastAnchorToPosition = gZeroVec;
     }
 
     if (!vector3IsZero(&player->lastAnchorToPosition) && player->anchoredTo){
         vector3Sub(&player->anchoredTo->transform.position, &player->lastAnchorToPosition, &player->lastAnchorToVelocity);
-    }
-    else if (!(player->anchoredTo) && (player->flags & PlayerFlagsGrounded)){
+        vector3Scale(&player->lastAnchorToVelocity, &player->lastAnchorToVelocity, 1.0f / FIXED_DELTA_TIME);
+    } else if (!(player->anchoredTo) && (player->flags & PlayerFlagsGrounded)){
         player->lastAnchorToVelocity = gZeroVec;
     }
 
@@ -894,7 +915,7 @@ void playerUpdate(struct Player* player) {
 
     float pitchSign = signf(player->pitchVelocity);
 
-    if (!didPassThroughPortal && lookingForward.y * pitchSign > newLookingForward.y * pitchSign) {
+    if (!didPassThroughPortal && lookingForward.y * pitchSign > newLookingForward.y * pitchSign && lookingForward.y * pitchSign > 0.0f) {
         struct Vector3 newForward = gZeroVec;
         newForward.y = pitchSign;
         struct Vector3 newUp;
@@ -957,5 +978,21 @@ void playerApplyCameraTransform(struct Player* player, struct Transform* cameraT
     
     if (player->flags & PlayerIsDead) {
         cameraTransform->position.y += DEAD_OFFSET;
+    }
+}
+
+void playerToggleJumpImpulse(struct Player* player, float newJumpImpulse){
+    if (player->jumpImpulse == JUMP_IMPULSE){
+        player->jumpImpulse = newJumpImpulse;
+    }else{
+        player->jumpImpulse = JUMP_IMPULSE;
+    }
+}
+
+void playerToggleInvincibility(struct Player* player){
+    if (player->flags & PlayerIsInvincible){
+        player->flags &= ~PlayerIsInvincible;
+    }else{
+        player->flags |= PlayerIsInvincible;
     }
 }

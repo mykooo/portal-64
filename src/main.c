@@ -10,6 +10,7 @@
 #include "graphics/graphics.h"
 #include "levels/cutscene_runner.h"
 #include "levels/intro.h"
+#include "levels/credits.h"
 #include "menu/main_menu.h"
 #include "menu/translations.h"
 #include "savefile/savefile.h"
@@ -24,6 +25,7 @@
 #include "util/profile.h"
 #include "util/rom.h"
 #include "util/time.h"
+#include "graphics/profile_task.h"
 
 #include "levels/levels.h"
 #include "savefile/checkpoint.h"
@@ -100,6 +102,7 @@ static void initProc(void* arg) {
 struct Scene gScene;
 struct GameMenu gGameMenu;
 struct Intro gIntro;
+struct Credits gCredits;
 
 extern OSMesgQueue dmaMessageQ;
 
@@ -138,10 +141,19 @@ struct SceneCallbacks gIntroCallbacks = {
     .updateCallback = (UpdateCallback)&introUpdate,
 };
 
+struct SceneCallbacks gCreditsCallbacks = {
+    .data = &gCredits,
+    .initCallback = (InitCallback)&creditsInit,
+    .graphicsCallback = (GraphicsCallback)&creditsRender,
+    .updateCallback = (UpdateCallback)&creditsUpdate,
+};
+
 struct SceneCallbacks* gSceneCallbacks = &gTestChamberCallbacks;
 
 void levelLoadWithCallbacks(int levelIndex) {
-    if (levelIndex == INTRO_MENU) {
+    if (levelIndex == CREDITS_MENU) {
+        gSceneCallbacks = &gCreditsCallbacks;
+    } else if (levelIndex == INTRO_MENU) {
         gSceneCallbacks = &gIntroCallbacks;
     } else if (levelIndex == MAIN_MENU) {
         levelLoad(0);
@@ -150,6 +162,8 @@ void levelLoadWithCallbacks(int levelIndex) {
         levelLoad(levelIndex);
         gSceneCallbacks = &gTestChamberCallbacks;
     }
+
+    levelClearQueuedLevel();
 }
 
 int updateSchedulerModeAndGetFPS(int interlacedMode) {
@@ -169,6 +183,7 @@ int updateSchedulerModeAndGetFPS(int interlacedMode) {
 		schedulerMode = HIGH_RES ? (interlacedMode ? OS_VI_MPAL_HPF1 : OS_VI_MPAL_HPN1) : (interlacedMode ? OS_VI_MPAL_LPF1 : OS_VI_MPAL_LPN1);
 		break;
     }
+
     return fps;
 }
 
@@ -240,6 +255,7 @@ static void gameProc(void* arg) {
     controllersInit();
     rumblePakClipInit();
     initAudio(fps);
+    timeSetFrameRate(fps);
     soundPlayerInit();
     translationsLoad(gSaveData.controls.subtitleLanguage);
     skSetSegmentLocation(CHARACTER_ANIMATION_SEGMENT, (unsigned)_animation_segmentSegmentRomStart);
@@ -268,6 +284,7 @@ static void gameProc(void* arg) {
                         portalSurfaceRevert(0);
                         portalSurfaceCleanupQueueInit();
                         heapInit(_heapStart, memoryEnd);
+                        profileClearAddressMap();
                         translationsLoad(gSaveData.controls.subtitleLanguage);
                         levelLoadWithCallbacks(levelGetQueued());
                         rumblePakClipInit();
@@ -312,6 +329,13 @@ static void gameProc(void* arg) {
                     profileEnd(updateStart, 0);
                     drawingEnabled = 1;
                 }
+    
+#if PORTAL64_WITH_RSP_PROFILER
+                if (controllerGetButtonDown(2, R_JPAD)) {
+                    struct GraphicsTask* task = &gGraphicsTasks[drawBufferIndex];
+                    profileTask(&scheduler, &gameThread, &task->task.list, task->framebuffer);
+                }
+#endif
                 timeUpdateDelta();
                 soundPlayerUpdate();
                 controllersSavePreviousState();

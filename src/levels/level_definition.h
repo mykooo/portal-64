@@ -64,6 +64,7 @@ enum CutsceneStepType {
     CutsceneStepTypeClosePortal,
     CutsceneStepShowPrompt,
     CutsceneStepRumble,
+    CutsceneStepActivateSignage,
 };
 
 enum CutscenePromptType {
@@ -120,6 +121,7 @@ struct CutsceneStep {
         } setSignal;
         struct {
             u16 signalIndex;
+            u8 forFrames;
         } waitForSignal;
         struct {
             u16 fromLocation;
@@ -160,6 +162,9 @@ struct CutsceneStep {
         struct {
             u8 rumbleLevel;
         } rumble;
+        struct {
+            u8 testChamberIndex;
+        } activateSignage;
         int noop;
     };
 };

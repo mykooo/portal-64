@@ -25,6 +25,11 @@ struct ContactSolver gContactSolver;
 void contactSolverCleanupManifold(struct ContactManifold* manifold) {
 	int writeIndex = 0;
 
+	if (!(manifold->shapeA->collisionLayers & manifold->shapeB->collisionLayers)) {
+		manifold->contactCount = 0;
+		return;
+	}
+
 	for (int readIndex = 0; readIndex < manifold->contactCount; ++readIndex) {
 		struct ContactPoint* contactPoint = &manifold->contacts[readIndex];
 		struct Vector3 offset;
@@ -374,7 +379,7 @@ void contactSolverIterate(struct ContactSolver* contactSolver) {
 		struct RigidBody* bodyA = cs->shapeA->body;
 		struct RigidBody* bodyB = cs->shapeB->body;
 
-		if (bodyA && !(bodyA->flags & RigidBodyIsKinematic)) {
+		if (bodyA && (bodyA->flags & (RigidBodyIsKinematic | RigidBodyForceVelocity)) != RigidBodyIsKinematic) {
 			vA = &bodyA->velocity;
 			wA = &bodyA->angularVelocity;
 		} else {
@@ -382,7 +387,7 @@ void contactSolverIterate(struct ContactSolver* contactSolver) {
 			wA = NULL;
 		}
 
-		if (bodyB && !(bodyB->flags & RigidBodyIsKinematic)) {
+		if (bodyB && (bodyB->flags & (RigidBodyIsKinematic | RigidBodyForceVelocity)) != RigidBodyIsKinematic) {
 			vB = &bodyB->velocity;
 			wB = &bodyB->angularVelocity;
 		} else {
