@@ -6,7 +6,7 @@
 #include "../graphics/render_scene.h"
 #include "../math/mathf.h"
 
-void staticRenderPopulateRooms(struct FrustrumCullingInformation* cullingInfo, struct RenderScene* renderScene) {
+void staticRenderPopulateRooms(struct FrustrumCullingInformation* cullingInfo, Mtx* staticTransforms, struct RenderScene* renderScene) {
     int currentRoom = 0;
 
     u64 visibleRooms = renderScene->visibleRooms;
@@ -18,16 +18,50 @@ void staticRenderPopulateRooms(struct FrustrumCullingInformation* cullingInfo, s
             for (int i = staticRange.min; i < staticRange.max; ++i) {
                 struct BoundingBoxs16* box = &gCurrentLevel->staticBoundingBoxes[i];
 
-                if (isOutsideFrustrum(cullingInfo, box)) {
-                    continue;
-                }
+                Mtx* matrix = NULL;
+
+                int transformIndex = gCurrentLevel->staticContent[i].transformIndex;
 
                 struct Vector3 boxCenter;
-                boxCenter.x = (float)(box->minX + box->maxX) * (0.5f / SCENE_SCALE);
-                boxCenter.y = (float)(box->minY + box->maxY) * (0.5f / SCENE_SCALE);
-                boxCenter.z = (float)(box->minZ + box->maxZ) * (0.5f / SCENE_SCALE);
 
-                renderSceneAdd(renderScene, gCurrentLevel->staticContent[i].displayList, NULL, gCurrentLevel->staticContent[i].materialIndex, &boxCenter, NULL);
+                if (transformIndex == NO_TRANSFORM_INDEX) {
+                    if (isOutsideFrustrum(cullingInfo, box)) {
+                        continue;
+                    }
+
+                    boxCenter.x = (float)((box->minX + box->maxX) * (0.5f / SCENE_SCALE));
+                    boxCenter.y = (float)(box->minY + box->maxY) * (0.5f / SCENE_SCALE);
+                    boxCenter.z = (float)(box->minZ + box->maxZ) * (0.5f / SCENE_SCALE);
+                } else {
+                    matrix = &staticTransforms[transformIndex];
+
+                    short* mtxAsShorts = (short*)matrix;
+
+                    boxCenter = gZeroVec;
+
+                    int x = mtxAsShorts[12];
+                    int y = mtxAsShorts[13];
+                    int z = mtxAsShorts[14];
+
+                    struct BoundingBoxs16 shiftedBox;
+                    shiftedBox.minX = box->minX + x;
+                    shiftedBox.minY = box->minY + y;
+                    shiftedBox.minZ = box->minZ + z;
+
+                    shiftedBox.maxX = box->maxX + x;
+                    shiftedBox.maxY = box->maxY + y;
+                    shiftedBox.maxZ = box->maxZ + z;
+
+                    if (isOutsideFrustrum(cullingInfo, &shiftedBox)) {
+                        continue;
+                    }
+
+                    boxCenter.x = (float)(shiftedBox.minX + shiftedBox.maxX) * (0.5f / SCENE_SCALE);
+                    boxCenter.y = (float)(shiftedBox.minY + shiftedBox.maxY) * (0.5f / SCENE_SCALE);
+                    boxCenter.z = (float)(shiftedBox.minZ + shiftedBox.maxZ) * (0.5f / SCENE_SCALE);
+                }
+
+                renderSceneAdd(renderScene, gCurrentLevel->staticContent[i].displayList, matrix, gCurrentLevel->staticContent[i].materialIndex, &boxCenter, NULL);
             }
         }
 
@@ -75,16 +109,16 @@ int staticRenderIsRoomVisible(u64 visibleRooms, u16 roomIndex) {
     return (visibleRooms & (1LL << roomIndex)) != 0;
 }
 
-void staticRender(struct Transform* cameraTransform, struct FrustrumCullingInformation* cullingInfo, u64 visibleRooms, struct RenderState* renderState) {
+void staticRender(struct Transform* cameraTransform, struct FrustrumCullingInformation* cullingInfo, u64 visibleRooms, struct DynamicRenderDataList* dynamicList, int stageIndex, Mtx* staticTransforms, struct RenderState* renderState) {
     if (!gCurrentLevel) {
         return;
     }
 
     struct RenderScene* renderScene = renderSceneNew(cameraTransform, renderState, MAX_RENDER_COUNT, visibleRooms);
 
-    staticRenderPopulateRooms(cullingInfo, renderScene);
+    staticRenderPopulateRooms(cullingInfo, staticTransforms, renderScene);
 
-    dynamicScenePopulate(cullingInfo, renderScene);
+    dynamicRenderPopulateRenderScene(dynamicList, stageIndex, renderScene, cameraTransform, cullingInfo, visibleRooms);
 
     renderSceneGenerate(renderScene, renderState);
 

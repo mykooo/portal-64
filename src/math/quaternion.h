@@ -9,6 +9,8 @@ struct Quaternion {
     float x, y, z, w;
 };
 
+extern struct Quaternion gQuaternionZero;
+
 void quatIdent(struct Quaternion* q);
 void quatAxisAngle(struct Vector3* axis, float angle, struct Quaternion* out);
 void quatAxisComplex(struct Vector3* axis, struct Vector2* complex, struct Quaternion* out);
@@ -27,5 +29,7 @@ void quatEulerAngles(struct Vector3* angles, struct Quaternion* out);
 void quatLerp(struct Quaternion* a, struct Quaternion* b, float t, struct Quaternion* out);
 void quatApplyAngularVelocity(struct Quaternion* input, struct Vector3* w, float timeStep, struct Quaternion* output);
 void quatDecompose(struct Quaternion* input, struct Vector3* axis, float* angle);
+
+float quatDot(struct Quaternion* a, struct Quaternion* b);
 
 #endif

@@ -8,13 +8,13 @@
 #include "cutscene_runner.h"
 #include "../graphics/graphics.h"
 #include "../player/player.h"
+#include "../savefile/checkpoint.h"
 
 #include "../util/rom.h"
 #include "../util/memory.h"
 
 struct LevelDefinition* gCurrentLevel;
 int gCurrentLevelIndex;
-u64 gTriggeredCutscenes;
 
 int gQueuedLevel = NO_QUEUED_LEVEL;
 struct Transform gRelativeTransform = {
@@ -55,6 +55,7 @@ struct LevelDefinition* levelFixPointers(struct LevelDefinition* from, int point
     }
 
     result->portalSurfaceMappingRange = ADJUST_POINTER_POS(result->portalSurfaceMappingRange, pointerOffset);
+    result->portalSurfaceDynamicMappingRange = ADJUST_POINTER_POS(result->portalSurfaceDynamicMappingRange, pointerOffset);
     result->portalSurfaceMappingIndices = ADJUST_POINTER_POS(result->portalSurfaceMappingIndices, pointerOffset);
     result->triggers = ADJUST_POINTER_POS(result->triggers, pointerOffset);
     result->cutscenes = ADJUST_POINTER_POS(result->cutscenes, pointerOffset);
@@ -82,6 +83,18 @@ struct LevelDefinition* levelFixPointers(struct LevelDefinition* from, int point
     result->pedestals = ADJUST_POINTER_POS(result->pedestals, pointerOffset);
     result->signage = ADJUST_POINTER_POS(result->signage, pointerOffset);
     result->boxDroppers = ADJUST_POINTER_POS(result->boxDroppers, pointerOffset);
+    result->switches = ADJUST_POINTER_POS(result->switches, pointerOffset);
+    result->dynamicBoxes = ADJUST_POINTER_POS(result->dynamicBoxes, pointerOffset);
+    result->ballLaunchers = ADJUST_POINTER_POS(result->ballLaunchers, pointerOffset);
+    result->ballCatchers = ADJUST_POINTER_POS(result->ballCatchers, pointerOffset);
+
+    result->animations = ADJUST_POINTER_POS(result->animations, pointerOffset);
+
+    for (int i = 0; i < result->animationInfoCount; ++i) {
+        result->animations[i].clips = ADJUST_POINTER_POS(result->animations[i].clips, pointerOffset);
+        result->animations[i].armature.boneParentIndex = ADJUST_POINTER_POS(result->animations[i].armature.boneParentIndex, pointerOffset);
+        result->animations[i].armature.pose = ADJUST_POINTER_POS(result->animations[i].armature.pose, pointerOffset);
+    }
 
     return result;
 }
@@ -100,7 +113,6 @@ void levelLoad(int index) {
 
     gCurrentLevel = levelFixPointers(metadata->levelDefinition, (char*)memory - metadata->segmentStart);
     gCurrentLevelIndex = index;
-    gTriggeredCutscenes = 0;
     gQueuedLevel = NO_QUEUED_LEVEL;
 
     collisionSceneInit(&gCollisionScene, gCurrentLevel->collisionQuads, gCurrentLevel->collisionQuadCount, &gCurrentLevel->world);
@@ -109,11 +121,33 @@ void levelLoad(int index) {
 void levelQueueLoad(int index, struct Transform* relativeExitTransform, struct Vector3* relativeVelocity) {
     if (index == NEXT_LEVEL) {
         gQueuedLevel = gCurrentLevelIndex + 1;
+
+        if (gQueuedLevel == LEVEL_COUNT) {
+            gQueuedLevel = MAIN_MENU;
+        }
     } else {
         gQueuedLevel = index;
     }
-    gRelativeTransform = *relativeExitTransform;
-    gRelativeVelocity = *relativeVelocity;
+    if (relativeExitTransform) {
+        gRelativeTransform = *relativeExitTransform;
+    } else {
+        transformInitIdentity(&gRelativeTransform);
+        gRelativeTransform.position.y = 1.0f;
+    }
+    if (relativeVelocity) {
+        gRelativeVelocity = *relativeVelocity;
+    } else {
+        gRelativeVelocity = gZeroVec;
+    }
+    checkpointClear();
+}
+
+void levelLoadLastCheckpoint() {
+    cutsceneRunnerReset();
+    gQueuedLevel = gCurrentLevelIndex;
+    transformInitIdentity(&gRelativeTransform);
+    gRelativeTransform.position.y = PLAYER_HEAD_HEIGHT;
+    gRelativeVelocity = gZeroVec;
 }
 
 int levelGetQueued() {
@@ -162,18 +196,6 @@ int levelQuadIndex(struct CollisionObject* pointer) {
     }
 
     return pointer - gCollisionScene.quads;
-}
-
-void levelCheckTriggers(struct Vector3* playerPos) {
-    for (int i = 0; i < gCurrentLevel->triggerCount; ++i) {
-        struct Trigger* trigger = &gCurrentLevel->triggers[i];
-        u64 cutsceneMask = 1LL << i;
-        if (!(gTriggeredCutscenes & cutsceneMask) && box3DContainsPoint(&trigger->box, playerPos)) {
-            cutsceneStart(&gCurrentLevel->cutscenes[trigger->cutsceneIndex]);
-            // prevent the trigger from happening again
-            gTriggeredCutscenes |= cutsceneMask;
-        }
-    }
 }
 
 struct Location* levelGetLocation(short index) {

@@ -309,6 +309,12 @@ std::shared_ptr<TextureDefinition> parseTextureDefinition(const YAML::Node& node
                 output.mErrors.push_back(ParseError(formatError(std::string("usePallete should be a file path to a pallete") + filename, usePallete.Mark())));
             }
         }
+
+        auto bypassEffects = node["bypassEffects"];
+
+        if (bypassEffects.IsDefined() && bypassEffects.as<bool>()) {
+            palleteFilename = "";
+        }
     } else {
         output.mErrors.push_back(ParseError(formatError(std::string("Tile should be a file name or object") + filename, node.Mark())));
         return NULL;
@@ -657,7 +663,7 @@ bool parseSingleTile(const YAML::Node& node, TileState& state, ParseResult& outp
     if (state.texture) {
         state.format = state.texture->Format();
         state.size = state.texture->Size();
-        if (!state.texture->GetLine(state.line)) {
+        if (!state.texture->GetLineForTile(state.line)) {
             output.mErrors.push_back(ParseError(formatError("Texture line width should be a multiple of 64 bits", node.Mark())));
         }
 
@@ -790,6 +796,8 @@ std::shared_ptr<Material> parseMaterial(const std::string& name, const YAML::Nod
             material->mProperties[it->first.as<std::string>()] = it->second.as<std::string>();
         }
     }
+    
+    material->mSortOrder = parseOptionalInteger(node["sortOrder"], output, std::numeric_limits<int>::min(), std::numeric_limits<int>::max(), 0);
 
     return material;
 

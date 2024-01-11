@@ -8,6 +8,8 @@
 #include "../audio/soundplayer.h"
 #include "../audio/clips.h"
 
+#include "../savefile/checkpoint.h"
+
 #include "../../build/assets/models/props/round_elevator_collision.h"
 #include "../../build/assets/models/props/round_elevator_interior.h"
 #include "../../build/assets/models/props/round_elevator.h"
@@ -15,12 +17,14 @@
 #include "../../build/assets/materials/static.h"
 
 #define AUTO_OPEN_DISTANCE      4.0f
-#define INSIDE_DISTANCE         1.0f
+#define INSIDE_DISTANCE         1.2f
 #define SAME_LEVEL_HEIGHT       3.0f
 #define OPEN_SPEED              2.0f
 
 #define OPEN_DELAY              1.0f
 #define CLOSE_DELAY             13.0f
+#define MOVING_SOUND_DELAY      3.5f  
+#define SHAKE_DURATION          0.5f    
 
 struct ColliderTypeData gElevatorColliderType = {
     CollisionShapeTypeMesh,
@@ -29,7 +33,7 @@ struct ColliderTypeData gElevatorColliderType = {
     &gMeshColliderCallbacks
 };
 
-int gElevatorCollisionLayers = COLLISION_LAYERS_STATIC | COLLISION_LAYERS_TANGIBLE;
+int gElevatorCollisionLayers = COLLISION_LAYERS_STATIC | COLLISION_LAYERS_BLOCK_BALL | COLLISION_LAYERS_TANGIBLE;
 
 struct Vector3 gClosedPosition[] = {
     [PROPS_ROUND_ELEVATOR_ELEVATOR_BONE] = {0, 0, 0},
@@ -43,25 +47,25 @@ struct Vector3 gOpenPosition[] = {
     [PROPS_ROUND_ELEVATOR_DOORRIGHT_BONE] = {1.188716 * SCENE_SCALE, 0.0f, -0.653916 * SCENE_SCALE},
 };
 
-void elevatorRender(void* data, struct RenderScene* renderScene) {
+void elevatorRender(void* data, struct DynamicRenderDataList* renderList, struct RenderState* renderState) {
     struct Elevator* elevator = (struct Elevator*)data;
 
-    if (!RENDER_SCENE_IS_ROOM_VISIBLE(renderScene, elevator->roomIndex)) {
-        return;
-    }
-
-    Mtx* matrix = renderStateRequestMatrices(renderScene->renderState, 1);
+    Mtx* matrix = renderStateRequestMatrices(renderState, 1);
     transformToMatrixL(&elevator->rigidBody.transform, matrix, SCENE_SCALE);
 
-    Mtx* armature = renderStateRequestMatrices(renderScene->renderState, PROPS_ROUND_ELEVATOR_DEFAULT_BONES_COUNT);
+    Mtx* armature = renderStateRequestMatrices(renderState, PROPS_ROUND_ELEVATOR_DEFAULT_BONES_COUNT);
+
+    if (!armature) {
+        return;
+    }
 
     for (int i = 0; i < PROPS_ROUND_ELEVATOR_DEFAULT_BONES_COUNT; ++i) {
         vector3Lerp(&gClosedPosition[i], &gOpenPosition[i], elevator->openAmount, &props_round_elevator_default_bones[i].position);
         transformToMatrixL(&props_round_elevator_default_bones[i], &armature[i], 1.0f);
     }
 
-    renderSceneAdd(
-        renderScene, 
+    dynamicRenderListAddData(
+        renderList, 
         props_round_elevator_model_gfx, 
         matrix, 
         DEFAULT_INDEX, 
@@ -74,8 +78,8 @@ void elevatorRender(void* data, struct RenderScene* renderScene) {
     int isPlayerInside = insideCheck == ElevatorFlagsIsLocked || insideCheck == ElevatorFlagsIsExit;
 
     if (elevator->openAmount > 0.0f || isPlayerInside) {
-        renderSceneAdd(
-            renderScene, 
+        dynamicRenderListAddData(
+            renderList, 
             props_round_elevator_interior_model_gfx, 
             matrix, 
             DEFAULT_INDEX, 
@@ -95,13 +99,16 @@ void elevatorInit(struct Elevator* elevator, struct ElevatorDefinition* elevator
 
     collisionObjectUpdateBB(&elevator->collisionObject);
 
-    elevator->dynamicId = dynamicSceneAdd(elevator, elevatorRender, &elevator->rigidBody.transform, 3.9f);
+    elevator->dynamicId = dynamicSceneAdd(elevator, elevatorRender, &elevator->rigidBody.transform.position, 3.9f);
     elevator->flags = elevatorDefinition->targetElevator == -1 ? ElevatorFlagsIsExit : 0;
     elevator->openAmount = 0.0f;
     elevator->roomIndex = elevatorDefinition->roomIndex;
     elevator->targetElevator = elevatorDefinition->targetElevator;
 
     elevator->timer = elevatorDefinition->targetElevator == -1 ? OPEN_DELAY : CLOSE_DELAY;
+    elevator->movingTimer = MOVING_SOUND_DELAY;
+    
+    dynamicSceneSetRoomFlags(elevator->dynamicId, ROOM_FLAG_FROM_INDEX(elevatorDefinition->roomIndex));
 }
 
 int elevatorUpdate(struct Elevator* elevator, struct Player* player) {
@@ -148,7 +155,16 @@ int elevatorUpdate(struct Elevator* elevator, struct Player* player) {
     }
 
     if (shouldLock) {
-        elevator->flags |= ElevatorFlagsIsLocked;
+        int shouldSaveCheckpoint = (elevator->flags & (ElevatorFlagsIsLocked | ElevatorFlagsIsExit)) == ElevatorFlagsIsExit;
+
+        elevator->flags |= ElevatorFlagsIsLocked;   
+
+        if (shouldSaveCheckpoint) {
+            // save the checkpoint after flag ElevatorFlagsIsLocked is set
+            // so loading this checkpoint doesn't immediately create another
+            // save checkpoint
+            sceneQueueCheckpoint(&gScene);
+        }
     }
 
     if ((elevator->flags & ElevatorFlagsIsLocked) != 0) {
@@ -166,8 +182,22 @@ int elevatorUpdate(struct Elevator* elevator, struct Player* player) {
         }
     }
 
-    if ((elevator->openAmount == 0.0f && shouldBeOpen) || (elevator->openAmount && !shouldBeOpen)) {
-        soundPlayerPlay(soundsElevatorDoor, 1.0f, 0.5f, &elevator->rigidBody.transform.position);
+    if ((elevator->openAmount == 0.0f && shouldBeOpen) || (elevator->openAmount == 1.0f && !shouldBeOpen)) {
+        soundPlayerPlay(soundsElevatorDoor, 1.0f, 0.5f, &elevator->rigidBody.transform.position, &gZeroVec);
+        if ((elevator->openAmount == 0.0f && shouldBeOpen) && (elevator->flags & ElevatorFlagsHasHadPlayer)){
+            soundPlayerPlay(soundsElevatorChime, 1.5f, 0.5f, &elevator->rigidBody.transform.position, &gZeroVec);
+        }
+    }
+    
+
+    if ((elevator->flags & ElevatorFlagsIsLocked) && (elevator->openAmount == 0.0f) && (elevator->movingTimer > 0.0f)){
+        elevator->movingTimer -= FIXED_DELTA_TIME;
+    }
+
+    if ((elevator->flags & ElevatorFlagsIsLocked) && (elevator->openAmount == 0.0f) && !(elevator->flags & ElevatorFlagsMovingSoundPlayed) && (elevator->movingTimer <= 0.0f) && inside){
+            soundPlayerPlay(soundsElevatorMoving, 1.25f, 0.5f, &elevator->rigidBody.transform.position, &gZeroVec);
+            player->shakeTimer = SHAKE_DURATION;
+            elevator->flags |= ElevatorFlagsMovingSoundPlayed;
     }
 
     elevator->openAmount = mathfMoveTowards(elevator->openAmount, shouldBeOpen ? 1.0f : 0.0f, OPEN_SPEED * FIXED_DELTA_TIME);

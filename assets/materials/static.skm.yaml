@@ -7,7 +7,7 @@ materials:
     gDPSetAlphaCompare: G_AC_NONE
     gSPGeometryMode:
       set: [G_CULL_BACK, G_ZBUFFER]
-      clear: [G_CULL_FRONT, G_TEXTURE_GEN, G_TEXTURE_GEN_LINEAR]
+      clear: [G_CULL_FRONT, G_TEXTURE_GEN, G_TEXTURE_GEN_LINEAR, G_FOG]
 
   concrete_modular_wall001d:
     gDPSetTile: 
@@ -44,6 +44,30 @@ materials:
     
     gDPSetCombineMode: G_CC_DECALRGB
     gDPSetCycleType: G_CYC_1CYCLE
+
+    properties:
+      tileSizeS: 0.5
+      tileSizeT: 0.5
+
+  metalwall048c:
+    gDPSetTile:
+      filename: ../../portal_pak_modified/materials/metal/metalwall048b.png
+      siz: G_IM_SIZ_16b
+    
+    gDPSetCombineMode: 
+      - G_CC_DECALRGB
+      - G_CC_PASS2
+    gDPSetRenderMode: 
+      - G_RM_FOG_SHADE_A
+      - G_RM_ZB_OPA_SURF
+    gDPSetCycleType: G_CYC_2CYCLE
+    gDPSetFogColor:
+      r: 238
+      g: 52
+      b: 13
+
+    gSPGeometryMode:
+      set: [G_FOG]
 
     properties:
       tileSizeS: 0.5
@@ -124,7 +148,28 @@ materials:
       g: 71
       b: 24
 
-    
+  metal_lift001_fog:
+    gDPSetTile:
+      filename: ../../portal_pak_modified/materials/metal/metalwall_bts_006a.png
+      siz: G_IM_SIZ_16b
+      s:
+        wrap: false
+      t:
+        wrap: false
+    gDPSetCombineMode: 
+      - G_CC_DECALRGB
+      - G_CC_PASS2
+    gDPSetRenderMode: 
+      - G_RM_FOG_SHADE_A
+      - G_RM_ZB_OPA_SURF
+    gDPSetCycleType: G_CYC_2CYCLE
+    gDPSetFogColor:
+      r: 238
+      g: 52
+      b: 13
+    gSPGeometryMode:
+      set: [G_FOG, G_LIGHTING, G_TEXTURE_GEN, G_TEXTURE_GEN_LINEAR, G_SHADE]
+
   light_orange001:
     gDPSetCombineMode:
       color: ["0", "0", "0", "PRIMITIVE"]
@@ -134,6 +179,19 @@ materials:
       r: 217
       g: 71
       b: 24
+
+  rail_metal:
+    gDPSetCombineMode:
+      color: ["0", "0", "0", "PRIMITIVE"]
+    gDPSetCycleType: G_CYC_1CYCLE
+
+    gSPGeometryMode:
+      clear: [G_CULL_BACK, G_CULL_FRONT]
+
+    gDPSetPrimColor:
+      r: 46
+      g: 36
+      b: 30
 
   hazard_orange_03b:
     gDPSetTile:
@@ -284,6 +342,20 @@ materials:
       color: ["SHADE", "0", "TEXEL0", "0"]
     gDPSetTextureFilter: G_TF_BILERP
 
+  door_02:
+    gDPSetTile: 
+      filename:
+        ../../portal_pak_modified/materials/models/props/door_02.png
+      siz: G_IM_SIZ_16b
+      fmt: G_IM_FMT_RGBA
+      s:
+        mirror: true
+    gSPGeometryMode:
+      set: [G_LIGHTING, G_SHADE]
+    gDPSetCombineMode: 
+      color: ["SHADE", "0", "TEXEL0", "0"]
+    gDPSetTextureFilter: G_TF_BILERP
+
   plastic/plasticwall001a:
     gDPSetPrimColor:
       r: 230
@@ -306,6 +378,25 @@ materials:
       clear: [G_LIGHTING]
     gDPSetCombineMode: G_CC_DECALRGB
     gDPSetCycleType: G_CYC_1CYCLE
+
+  grav_flare:
+    gDPSetTile:
+      filename: ../../portal_pak_modified/materials/sprites/grav_flare.png
+      fmt: G_IM_FMT_RGBA
+      siz: G_IM_SIZ_32b
+      s:
+        mirror: true
+      t:
+        mirror: true
+
+    gDPSetRenderMode: G_RM_ZB_XLU_SURF
+
+    gDPSetCombineMode:
+      color: ["0", "0", "0", "TEXEL0"]
+      alpha: ["0", "0", "0", "TEXEL0"]
+    gSPGeometryMode:
+      clear: [G_CULL_BACK, G_CULL_FRONT]
+    
   
   button:
     gDPSetTile:
@@ -329,6 +420,22 @@ materials:
       set: [G_LIGHTING, G_SHADE]
     gDPSetCombineMode: 
       color: ["SHADE", "0", "TEXEL0", "0"]
+
+  newsignage_back00:
+    gDPSetTile: 
+      filename: ../../portal_pak_modified/materials/models/props_animsigns/newsignage_back00.png
+      siz: G_IM_SIZ_4b
+      twoTone: true
+      s:
+        wrap: false
+      t:
+        wrap: false
+
+    gDPSetRenderMode: G_RM_ZB_OPA_SURF
+        
+    gSPGeometryMode:
+      clear: [G_LIGHTING]
+    gDPSetCycleType: G_CYC_1CYCLE
 
   newsignage_back02:
     gDPSetTile: 
@@ -509,3 +616,139 @@ materials:
       g: 0
       b: 0
       a: 0
+
+  solid_black_cap:
+    gDPSetPrimColor:
+      r: 32
+      g: 32
+      b: 32
+    gSPGeometryMode:
+      set: [G_LIGHTING, G_SHADE]
+    gDPSetCombineMode: 
+      color: ["PRIMITIVE", "0", "SHADE", "0"]
+
+  ball_catcher:
+    gDPSetTile:
+      - filename: ../../portal_pak_modified/materials/models/props/ball_catcher_back.png
+        fmt: G_IM_FMT_RGBA
+        siz: G_IM_SIZ_16b
+        tmem: 0
+        s:
+          wrap: false
+        t:
+          wrap: false
+      - filename: ../../portal_pak_modified/materials/models/props/ball_catcher_sheet.png
+        fmt: G_IM_FMT_RGBA
+        siz: G_IM_SIZ_16b
+        tmem: 256
+        s:
+          wrap: false
+        t:
+          wrap: false
+      - filename: ./models/props/combine_ball_catcher.png
+        fmt: G_IM_FMT_RGBA
+        siz: G_IM_SIZ_16b
+        tmem: 384
+        s:
+          wrap: false
+        t:
+          wrap: false
+
+  light_rail_beam:
+    gDPSetTile:
+      filename: ../../portal_pak_modified/materials/effects/light_rail_beam1.png
+      siz: G_IM_SIZ_32b
+      fmt: G_IM_FMT_RGBA
+      s:
+        mirror: true
+      t:
+        mirror: true
+    
+    gDPSetRenderMode: G_RM_ZB_XLU_SURF
+
+    gDPSetCombineMode:
+      color: ["0", "0", "0", "TEXEL0"]
+      alpha: ["0", "0", "0", "TEXEL0"]
+
+    properties:
+      tileSizeS: 0.25
+      tileSizeT: 0.25
+
+  hazard_liquid:
+    gDPSetTile:
+      filename: ../../portal_pak_modified/materials/nature/hazard_liquid.png
+      siz: G_IM_SIZ_16b
+    
+    gDPSetCombineMode:
+      color: ["0", "0", "0", "TEXEL0"]
+    gDPSetCycleType: G_CYC_1CYCLE
+
+    properties:
+      tileSizeS: 2
+      tileSizeT: 2
+
+  hazard_liquid_bottom:
+    gDPSetTile:
+      filename: ../../portal_pak_modified/materials/nature/hazard_liquid.png
+      siz: G_IM_SIZ_16b
+    
+    gDPSetCombineMode: 
+      - G_CC_DECALRGB
+      - G_CC_PASS2
+    gDPSetRenderMode: 
+      - G_RM_FOG_SHADE_A
+      - G_RM_ZB_OPA_SURF
+    gDPSetCycleType: G_CYC_2CYCLE
+    gDPSetFogColor:
+      r: 238
+      g: 52
+      b: 13
+
+    gSPGeometryMode:
+      set: [G_FOG]
+
+    properties:
+      tileSizeS: 2
+      tileSizeT: 2
+
+  orange_spot:
+    gDPSetTile:
+      filename: ../../portal_pak_modified/materials/decals/orange_spot.png
+      fmt: G_IM_FMT_I
+      siz: G_IM_SIZ_4b
+      s:
+        mirror: true
+      t:
+        mirror: true
+
+    gDPSetRenderMode: G_RM_ZB_XLU_DECAL
+        
+    gSPGeometryMode:
+      clear: [G_LIGHTING, G_SHADE]
+    gDPSetCombineMode: 
+      color: ["0", "0", "0", "PRIMITIVE"]
+      alpha: ["0", "0", "0", "TEXEL0"]
+
+    gDPSetPrimColor:
+      r: 230
+      g: 103
+      b: 36
+
+  fleck_ash2:
+    gDPSetTile:
+      filename: ../../portal_pak_modified/materials/effects/fleck_ash2.png
+      fmt: G_IM_FMT_I
+      siz: G_IM_SIZ_4b
+
+    gDPSetRenderMode: G_RM_ZB_XLU_DECAL
+        
+    gSPGeometryMode:
+      clear: [G_LIGHTING, G_SHADE]
+    gDPSetCombineMode: 
+      color: ["0", "0", "0", "PRIMITIVE"]
+      alpha: ["0", "0", "0", "TEXEL0"]
+
+    gDPSetPrimColor:
+      r: 3
+      g: 3
+      b: 3

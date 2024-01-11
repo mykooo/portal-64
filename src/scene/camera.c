@@ -15,7 +15,7 @@ int isOutsideFrustrum(struct FrustrumCullingInformation* frustrum, struct Boundi
         closestPoint.y = normal->y < 0.0f ? boundingBox->minY : boundingBox->maxY;
         closestPoint.z = normal->z < 0.0f ? boundingBox->minZ : boundingBox->maxZ;
 
-        if (planePointDistance(&frustrum->clippingPlanes[i], &closestPoint) < 0.0f) {
+        if (planePointDistance(&frustrum->clippingPlanes[i], &closestPoint) < 0.00001f) {
             return 1;
         }
     }
@@ -95,18 +95,7 @@ int cameraIsValidMatrix(float matrix[4][4]) {
     return fabsf(matrix[3][0]) <= 0x7fff && fabsf(matrix[3][1]) <= 0x7fff && fabsf(matrix[3][2]) <= 0x7fff;
 }
 
-Mtx* cameraSetupMatrices(struct Camera* camera, struct RenderState* renderState, float aspectRatio, u16* perspNorm, Vp* viewport, struct FrustrumCullingInformation* clippingInfo) {
-    Mtx* viewProjMatrix = renderStateRequestMatrices(renderState, 2);
-    
-    if (!viewProjMatrix) {
-        return NULL;
-    }
-
-    Gfx* renderStateStart = renderState->dl;
-
-    guMtxIdent(&viewProjMatrix[0]);
-    gSPMatrix(renderState->dl++, osVirtualToPhysical(&viewProjMatrix[0]), G_MTX_MODELVIEW | G_MTX_LOAD | G_MTX_NOPUSH);
-
+int cameraSetupMatrices(struct Camera* camera, struct RenderState* renderState, float aspectRatio, Vp* viewport, int extractClippingPlanes, struct CameraMatrixInfo* output) {
     float view[4][4];
     float persp[4][4];
     float combined[4][4];
@@ -118,8 +107,7 @@ Mtx* cameraSetupMatrices(struct Camera* camera, struct RenderState* renderState,
     float centerY = ((SCREEN_HT << 1) - (float)viewport->vp.vtrans[1]) * (1.0f / (SCREEN_HT << 1));
 
     guOrthoF(combined, centerX - scaleX, centerX + scaleX, centerY - scaleY, centerY + scaleY, 1.0f, -1.0f, 1.0f);
-    u16 perspectiveNormalize;
-    cameraBuildProjectionMatrix(camera, view, &perspectiveNormalize, aspectRatio);
+    cameraBuildProjectionMatrix(camera, view, &output->perspectiveNormalize, aspectRatio);
     guMtxCatF(view, combined, persp);
 
     cameraBuildViewMatrix(camera, view);
@@ -129,28 +117,62 @@ Mtx* cameraSetupMatrices(struct Camera* camera, struct RenderState* renderState,
         goto error;
     }
 
-    guMtxF2L(combined, &viewProjMatrix[1]);
+    output->projectionView = renderStateRequestMatrices(renderState, 1);
 
-    if (clippingInfo) {
-        cameraExtractClippingPlane(combined, &clippingInfo->clippingPlanes[0], 0, 1.0f);
-        cameraExtractClippingPlane(combined, &clippingInfo->clippingPlanes[1], 0, -1.0f);
-        cameraExtractClippingPlane(combined, &clippingInfo->clippingPlanes[2], 1, 1.0f);
-        cameraExtractClippingPlane(combined, &clippingInfo->clippingPlanes[3], 1, -1.0f);
-        cameraExtractClippingPlane(combined, &clippingInfo->clippingPlanes[4], 2, 1.0f);
-        clippingInfo->cameraPos = camera->transform.position;
-        clippingInfo->usedClippingPlaneCount = 5;
+    if (!output->projectionView) {
+        return 0;
     }
 
-    gSPMatrix(renderState->dl++, osVirtualToPhysical(&viewProjMatrix[1]), G_MTX_PROJECTION | G_MTX_LOAD | G_MTX_NOPUSH);
-    gSPPerspNormalize(renderState->dl++, perspectiveNormalize);
+    guMtxF2L(combined, output->projectionView);
 
-    if (perspNorm) {
-        *perspNorm = perspectiveNormalize;
+    if (extractClippingPlanes) {
+        cameraExtractClippingPlane(combined, &output->cullingInformation.clippingPlanes[0], 0, 1.0f);
+        cameraExtractClippingPlane(combined, &output->cullingInformation.clippingPlanes[1], 0, -1.0f);
+        cameraExtractClippingPlane(combined, &output->cullingInformation.clippingPlanes[2], 1, 1.0f);
+        cameraExtractClippingPlane(combined, &output->cullingInformation.clippingPlanes[3], 1, -1.0f);
+        cameraExtractClippingPlane(combined, &output->cullingInformation.clippingPlanes[4], 2, 1.0f);
+        output->cullingInformation.cameraPos = camera->transform.position;
+        output->cullingInformation.usedClippingPlaneCount = 5;
     }
 
-    return &viewProjMatrix[1];
-
+    return 1;
 error:
-    renderState->dl = renderStateStart;
-    return NULL;
+    return 0;
+}
+
+int cameraApplyMatrices(struct RenderState* renderState, struct CameraMatrixInfo* matrixInfo) {
+    Mtx* modelMatrix = renderStateRequestMatrices(renderState, 1);
+    
+    if (!modelMatrix) {
+        return 0;
+    }
+
+    guMtxIdent(modelMatrix);
+    gSPMatrix(renderState->dl++, osVirtualToPhysical(modelMatrix), G_MTX_MODELVIEW | G_MTX_LOAD | G_MTX_NOPUSH);
+
+    gSPMatrix(renderState->dl++, osVirtualToPhysical(matrixInfo->projectionView), G_MTX_PROJECTION | G_MTX_LOAD | G_MTX_NOPUSH);
+    gSPPerspNormalize(renderState->dl++, matrixInfo->perspectiveNormalize);
+
+    return 1;
+}
+
+// assuming projection matrix works as follows
+// a 0 0                    0
+// 0 b 0                    0
+// 0 0 (n + f) / (n - f)    2 * n * f / (n - f)
+// 0 0 -1                   0
+
+// distance should be a positive value not scaled by scene scale
+// returns -1 for the near plane
+// returns 1 for the far plane
+float cameraClipDistance(struct Camera* camera, float distance) {
+    float modifiedDistance = distance * -SCENE_SCALE;
+    
+    float denom = modifiedDistance * (camera->nearPlane - camera->farPlane);
+
+    if (fabsf(denom) < 0.00000001f) {
+        return 0.0f;
+    }
+
+    return -((camera->nearPlane + camera->farPlane) * modifiedDistance + 2.0f * camera->nearPlane * camera->farPlane) / denom;
 }

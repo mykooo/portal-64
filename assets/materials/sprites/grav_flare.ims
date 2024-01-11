@@ -1,0 +1,8 @@
+-crop 16x16+16+16 -resize 16x16
+    \(
+        +clone
+        -colorspace gray
+        -alpha off
+    \)
+    -compose copy-opacity
+    -composite

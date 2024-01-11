@@ -7,19 +7,21 @@
 #include "../math/boxs16.h"
 #include "../math/box3d.h"
 #include "../math/range.h"
+#include "../sk64/skelatool_clip.h"
+#include "../sk64/skelatool_armature.h"
+#include "../physics/collision_box.h"
+
+#define NO_TRANSFORM_INDEX  0xFF
 
 struct StaticContentElement {
     Gfx* displayList;
     u8 materialIndex;
+    u8 transformIndex;
 };
 
 struct BoundingSphere {
     short x, y, z;
     short radius;
-};
-
-enum TriggerCutsceneIndex {
-    TRIGGER_START,
 };
 
 enum CutsceneStepType {
@@ -40,6 +42,12 @@ enum CutsceneStepType {
     CutsceneStepTypeWaitForCutscene,
     CutsceneStepTypeHidePedestal,
     CutsceneStepTypePointPedestal,
+    CutsceneStepPlayAnimation,
+    CutsceneStepSetAnimationSpeed,
+    CutsceneStepWaitForAnimation,
+    CutsceneStepSaveCheckpoint,
+    CutsceneStepKillPlayer,
+    CutsceneStepTypeClosePortal,
 };
 
 #define CH_NONE    0xFF
@@ -68,6 +76,9 @@ struct CutsceneStep {
             u16 locationIndex;
             u16 portalIndex;
         } openPortal;
+        struct {
+            u16 portalIndex;
+        } closePortal;
         float delay;
         struct {
             u16 signalIndex;
@@ -94,6 +105,21 @@ struct CutsceneStep {
         struct {
             u16 atLocation;
         } pointPedestal;
+        struct {
+            u8 armatureIndex;
+            u8 animationIndex;
+            s8 playbackSpeed;
+        } playAnimation;
+        struct {
+            u8 armatureIndex;
+            s8 playbackSpeed;
+        } setAnimationSpeed;
+        struct {
+            u8 armatureIndex;
+        } waitForAnimation;
+        struct {
+            u8 isWater;
+        } killPlayer;
         int noop;
     };
 };
@@ -106,6 +132,7 @@ struct Cutscene {
 struct Trigger {
     struct Box3D box;
     short cutsceneIndex;
+    short signalIndex;
 };
 
 struct Location {
@@ -113,11 +140,17 @@ struct Location {
     short roomIndex;
 };
 
+enum DoorType {
+    DoorType01,
+    DoorType02,
+};
+
 struct DoorDefinition {
     struct Vector3 location;
     struct Quaternion rotation;
     short doorwayIndex;
     short signalIndex;
+    short doorType;
 };
 
 struct ButtonDefinition {
@@ -125,6 +158,14 @@ struct ButtonDefinition {
     short roomIndex;
     short signalIndex;
     short cubeSignalIndex;
+};
+
+struct SwitchDefinition {
+    struct Vector3 location;
+    struct Quaternion rotation;
+    short roomIndex;
+    short signalIndex;
+    float duration;
 };
 
 struct DecorDefinition {
@@ -167,6 +208,35 @@ struct BoxDropperDefinition {
     short signalIndex;
 };
 
+struct AnimationInfo {
+    struct SKArmatureDefinition armature;
+    struct SKAnimationClip* clips;
+    short clipCount;
+};
+
+struct DynamicBoxDefinition {
+    struct CollisionBox box;
+    struct Vector3 position;
+    struct Quaternion rotation;
+    short roomIndex;
+    short transformIndex;
+};
+
+struct BallLauncherDefinition {
+    struct Vector3 position;
+    struct Quaternion rotation;
+    short roomIndex;
+    short signalIndex;
+    float ballLifetime;
+};
+
+struct BallCatcherDefinition {
+    struct Vector3 position;
+    struct Quaternion rotation;
+    short roomIndex;
+    short signalIndex;
+};
+
 struct LevelDefinition {
     struct CollisionObject* collisionQuads;
     struct StaticContentElement *staticContent;
@@ -175,6 +245,8 @@ struct LevelDefinition {
     struct PortalSurface* portalSurfaces;
     // maps index of a collisionQuads to indices in portalSurfaces
     struct PortalSurfaceMappingRange* portalSurfaceMappingRange;
+    struct DynamicBoxDefinition* dynamicBoxes;
+    struct PortalSurfaceMappingRange* portalSurfaceDynamicMappingRange;
     u8* portalSurfaceMappingIndices;
     struct Trigger* triggers;
     struct Cutscene* cutscenes;
@@ -189,9 +261,14 @@ struct LevelDefinition {
     struct PedestalDefinition* pedestals;
     struct SignageDefinition* signage;
     struct BoxDropperDefinition* boxDroppers;
+    struct AnimationInfo* animations;
+    struct SwitchDefinition* switches;
+    struct BallLauncherDefinition* ballLaunchers;
+    struct BallCatcherDefinition* ballCatchers;
     short collisionQuadCount;
     short staticContentCount;
     short portalSurfaceCount;
+    short dynamicBoxCount;
     short triggerCount;
     short cutsceneCount;
     short locationCount;
@@ -204,6 +281,10 @@ struct LevelDefinition {
     short pedestalCount;
     short signageCount;
     short boxDropperCount;
+    short animationInfoCount;
+    short switchCount;
+    short ballLauncherCount;
+    short ballCatcherCount;
     short startLocation;
 };
 

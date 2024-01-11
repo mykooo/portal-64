@@ -4,7 +4,8 @@
 #include <ultra64.h>
 
 void controllersInit(void);
-void controllersUpdate(void);
+void controllersReadPendingData(void);
+void controllersSavePreviousState(void);
 void controllersTriggerRead(void);
 
 enum ControllerDirection {
@@ -25,5 +26,7 @@ u16 controllerGetButtonDown(int index, u16 button);
 u16 controllerGetButtonUp(int index, u16 button);
 enum ControllerDirection controllerGetDirection(int index);
 enum ControllerDirection controllerGetDirectionDown(int index);
+
+void controllerHandlePlayback();
 
 #endif

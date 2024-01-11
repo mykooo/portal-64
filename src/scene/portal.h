@@ -9,12 +9,13 @@
 #include "static_scene.h"
 #include "./portal_surface.h"
 
-
+#define STARTING_RENDER_DEPTH       2
 #define PORTAL_LOOP_SIZE    8
 
 enum PortalFlags {
     PortalFlagsOddParity = (1 << 0),
     PortalFlagsNeedsNewHole = (1 << 1),
+    PortalFlagsPlayerPortal = (1 << 2),
 };
 
 struct Portal {
@@ -26,43 +27,28 @@ struct Portal {
     struct Vector2s16 fullSizeLoopCenter;
     short portalSurfaceIndex;
     short roomIndex;
+    short transformIndex;
+    struct Vector3 relativePos;
 };
-
-struct RenderProps;
-
-typedef void SceneRenderCallback(void* data, struct RenderProps* properties, struct RenderState* renderState);
 
 #define NO_PORTAL 0xFF
 
-struct RenderProps {
-    struct Camera camera;
-    float aspectRatio;
-    Mtx* perspectiveMatrix;
-    Vp* viewport;
-    struct FrustrumCullingInformation cullingInfo;
+#define PORTAL_RENDER_TYPE_VISIBLE_0    (1 << 0)
+#define PORTAL_RENDER_TYPE_VISIBLE_1    (1 << 1)
+#define PORTAL_RENDER_TYPE_ENABLED_0    (1 << 2)
+#define PORTAL_RENDER_TYPE_ENABLED_1    (1 << 3)
 
-    u16 perspectiveCorrect;
-    u8 currentDepth;
-    u8 fromPortalIndex;
+#define PORTAL_RENDER_TYPE_SECOND_CLOSER    (1 << 4)
 
-    u16 fromRoom;
+#define PORTAL_RENDER_TYPE_VISIBLE(portalIndex) (PORTAL_RENDER_TYPE_VISIBLE_0 << (portalIndex))
+#define PORTAL_RENDER_TYPE_ENABLED(portalIndex) (PORTAL_RENDER_TYPE_ENABLED_0 << (portalIndex))
 
-    short minX;
-    short minY;
-    short maxX;
-    short maxY;
-    
-    s8 clippingPortalIndex;
-};
-
-void renderPropsInit(struct RenderProps* props, struct Camera* camera, float aspectRatio, struct RenderState* renderState, u16 roomIndex);
-int renderPropsNext(struct RenderProps* current, struct RenderProps* next, struct Transform* fromPortal, struct Transform* toPortal, struct RenderState* renderState);
+extern struct Vector3 gPortalOutline[PORTAL_LOOP_SIZE];
 
 void portalInit(struct Portal* portal, enum PortalFlags flags);
 void portalUpdate(struct Portal* portal, int isOpen);
-void portalRender(struct Portal* portal, struct Portal* otherPortal, struct RenderProps* props, SceneRenderCallback sceneRenderer, void* data, struct RenderState* renderState);
 
-int portalAttachToSurface(struct Portal* portal, struct PortalSurface* surface, int surfaceIndex, struct Transform* portalAt);
+int portalAttachToSurface(struct Portal* portal, struct PortalSurface* surface, int surfaceIndex, struct Transform* portalAt, int just_checking);
 void portalCheckForHoles(struct Portal* portals);
 
 // data should be of type struct Transform

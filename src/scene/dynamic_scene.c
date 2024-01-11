@@ -5,33 +5,17 @@
 
 struct DynamicScene gDynamicScene;
 
-#define FLAG_MASK (DYNAMIC_SCENE_OBJECT_FLAGS_USED | DYNAMIC_SCENE_OBJECT_FLAGS_ACTIVE)
-
-#define FLAG_VALUE_NOT_TOUCHING_PORTAL (DYNAMIC_SCENE_OBJECT_FLAGS_USED | DYNAMIC_SCENE_OBJECT_FLAGS_ACTIVE)
-
 void dynamicSceneInit() {
     for (int i = 0; i < MAX_DYNAMIC_SCENE_OBJECTS; ++i) {
         gDynamicScene.objects[i].flags = 0;
     }
-}
 
-void dynamicScenePopulateWithFlags(struct FrustrumCullingInformation* cullingInfo, struct RenderScene* renderScene, int flags) {
-    for (int i = 0; i < MAX_DYNAMIC_SCENE_OBJECTS; ++i) {
-        struct DynamicSceneObject* object = &gDynamicScene.objects[i];
-        if ((object->flags & FLAG_MASK) == flags) {
-            struct Vector3 scaledPos;
-            vector3Scale(&object->transform->position, &scaledPos, SCENE_SCALE);
-
-            if (isSphereOutsideFrustrum(cullingInfo, &scaledPos, object->scaledRadius)) {
-                continue;
-            }
-
-            object->renderCallback(object->data, renderScene);
-        }
+    for (int i = 0; i < MAX_VIEW_DEPENDANT_OBJECTS; ++i) {
+        gDynamicScene.viewDependantObjects[i].flags = 0;
     }
 }
 
-int dynamicSceneAdd(void* data, DynamicRender renderCallback, struct Transform* transform, float radius) {
+int dynamicSceneAdd(void* data, DynamicRender renderCallback, struct Vector3* position, float radius) {
     for (int i = 0; i < MAX_DYNAMIC_SCENE_OBJECTS; ++i) {
         struct DynamicSceneObject* object = &gDynamicScene.objects[i];
         if (!(object->flags & DYNAMIC_SCENE_OBJECT_FLAGS_USED)) {
@@ -39,8 +23,9 @@ int dynamicSceneAdd(void* data, DynamicRender renderCallback, struct Transform* 
             object->flags = DYNAMIC_SCENE_OBJECT_FLAGS_USED | DYNAMIC_SCENE_OBJECT_FLAGS_ACTIVE;
             object->data = data;
             object->renderCallback = renderCallback;
-            object->transform = transform;
+            object->position = position;
             object->scaledRadius = radius * SCENE_SCALE;
+            object->roomFlags = ~0;
             return i;
         }
     }
@@ -48,22 +33,84 @@ int dynamicSceneAdd(void* data, DynamicRender renderCallback, struct Transform* 
     return INVALID_DYNAMIC_OBJECT;
 }
 
+int dynamicSceneAddViewDependant(void* data, DynamicViewRender renderCallback, struct Vector3* position, float radius) {
+    for (int i = 0; i < MAX_VIEW_DEPENDANT_OBJECTS; ++i) {
+        struct DynamicSceneViewDependantObject* object = &gDynamicScene.viewDependantObjects[i];
+        if (!(object->flags & DYNAMIC_SCENE_OBJECT_FLAGS_USED)) {
+
+            object->flags = DYNAMIC_SCENE_OBJECT_FLAGS_USED | DYNAMIC_SCENE_OBJECT_FLAGS_ACTIVE;
+            object->data = data;
+            object->renderCallback = renderCallback;
+            object->position = position;
+            object->scaledRadius = radius * SCENE_SCALE;
+            object->roomFlags = ~0;
+            return i + MAX_DYNAMIC_SCENE_OBJECTS;
+        }
+    }
+
+    return INVALID_DYNAMIC_OBJECT;
+}
+
 void dynamicSceneRemove(int id) {
-    if (id < 0 || id >= MAX_DYNAMIC_SCENE_OBJECTS) {
+    if (id < 0) {
         return;
     }
 
-    gDynamicScene.objects[id].flags = 0;
+    if (id < MAX_DYNAMIC_SCENE_OBJECTS) {
+        gDynamicScene.objects[id].flags = 0;
+    }
+
+    id -= MAX_DYNAMIC_SCENE_OBJECTS;
+
+    if (id < MAX_VIEW_DEPENDANT_OBJECTS) {
+        gDynamicScene.viewDependantObjects[id].flags = 0;
+    }
 }
 
 void dynamicSceneSetFlags(int id, int flags) {
-    gDynamicScene.objects[id].flags |= flags;
+    if (id < 0) {
+        return;
+    }
+
+    if (id < MAX_DYNAMIC_SCENE_OBJECTS) {
+        gDynamicScene.objects[id].flags |= flags;
+    }
+
+    id -= MAX_DYNAMIC_SCENE_OBJECTS;
+
+    if (id < MAX_VIEW_DEPENDANT_OBJECTS) {
+        gDynamicScene.viewDependantObjects[id].flags |= flags;
+    }
 }
 
 void dynamicSceneClearFlags(int id, int flags) {
-    gDynamicScene.objects[id].flags &= ~flags;
+    if (id < 0) {
+        return;
+    }
+
+    if (id < MAX_DYNAMIC_SCENE_OBJECTS) {
+        gDynamicScene.objects[id].flags &= ~flags;
+    }
+
+    id -= MAX_DYNAMIC_SCENE_OBJECTS;
+
+    if (id < MAX_VIEW_DEPENDANT_OBJECTS) {
+        gDynamicScene.viewDependantObjects[id].flags &= ~flags;
+    }
 }
 
-void dynamicScenePopulate(struct FrustrumCullingInformation* cullingInfo, struct RenderScene* renderScene) {
-    dynamicScenePopulateWithFlags(cullingInfo, renderScene, FLAG_VALUE_NOT_TOUCHING_PORTAL);
+void dynamicSceneSetRoomFlags(int id, u64 roomFlags) {
+    if (id < 0) {
+        return;
+    }
+
+    if (id < MAX_DYNAMIC_SCENE_OBJECTS) {
+        gDynamicScene.objects[id].roomFlags = roomFlags;
+    }
+
+    id -= MAX_DYNAMIC_SCENE_OBJECTS;
+
+    if (id < MAX_VIEW_DEPENDANT_OBJECTS) {
+        gDynamicScene.viewDependantObjects[id].roomFlags = roomFlags;
+    }
 }

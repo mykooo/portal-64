@@ -173,6 +173,8 @@ void contactSolverInit(struct ContactSolver* contactSolver) {
 	for (int i = 1; i < MAX_CONTACT_COUNT; ++i) {
 		contactSolver->contacts[i-1].next = &contactSolver->contacts[i];
 	}
+
+	contactSolver->firstPointConstraint = NULL;
 }
 
 void contactSolverPreSolve(struct ContactSolver* contactSolver) {
@@ -193,7 +195,7 @@ void contactSolverPreSolve(struct ContactSolver* contactSolver) {
 		struct RigidBody* bodyA = cs->shapeA->body;
 		struct RigidBody* bodyB = cs->shapeB->body;
 
-		if (bodyA) {
+		if (bodyA && !(bodyA->flags & RigidBodyIsKinematic)) {
 			vA = &bodyA->velocity;
 			wA = &bodyA->angularVelocity;
 		} else {
@@ -201,7 +203,7 @@ void contactSolverPreSolve(struct ContactSolver* contactSolver) {
 			wA = NULL;
 		}
 
-		if (bodyB) {
+		if (bodyB && !(bodyB->flags & RigidBodyIsKinematic)) {
 			vB = &bodyB->velocity;
 			wB = &bodyB->angularVelocity;
 		} else {
@@ -220,11 +222,11 @@ void contactSolverPreSolve(struct ContactSolver* contactSolver) {
             vector3Cross(&c->contactBWorld, &cs->normal, &rbCn);
 			float nm = 0;
 			
-			if (bodyA) {
+			if (vA) {
 				nm += bodyA->massInv;
 			}
 
-			if (bodyB) {
+			if (vB) {
 				nm += bodyB->massInv;
 			}
 
@@ -232,11 +234,11 @@ void contactSolverPreSolve(struct ContactSolver* contactSolver) {
 			tm[ 0 ] = nm;
 			tm[ 1 ] = nm;
 
-			if (bodyA) {
+			if (vA) {
 				nm += bodyA->momentOfInertiaInv * vector3MagSqrd(&raCn);
 			}
 
-			if (bodyB) {
+			if (vB) {
 				nm += bodyB->momentOfInertiaInv * vector3MagSqrd(&rbCn);
 			}
 
@@ -249,10 +251,10 @@ void contactSolverPreSolve(struct ContactSolver* contactSolver) {
 				struct Vector3 rbCt;
                 vector3Cross(&cs->tangentVectors[ i ], &c->contactBWorld, &rbCt);
 
-				if (bodyA) {
+				if (vA) {
 					tm[ i ] += bodyA->momentOfInertiaInv * vector3MagSqrd(&raCt);
 				}
-				if (bodyB) {
+				if (vB) {
 					tm[ i ] += bodyB->momentOfInertiaInv * vector3MagSqrd(&rbCt);
 				}
 
@@ -274,13 +276,13 @@ void contactSolverPreSolve(struct ContactSolver* contactSolver) {
 
             struct Vector3 w;
 
-			if (bodyA) {
+			if (vA) {
 				vector3AddScaled(vA, &P, -bodyA->massInv, vA);
 				vector3Cross(&c->contactAWorld, &P, &w);
 				vector3AddScaled(wA, &w, -bodyA->momentOfInertiaInv, wA);
 			}
 
-			if (bodyB) {
+			if (vB) {
 				vector3AddScaled(vB, &P, bodyB->massInv, vB);
 				vector3Cross(&c->contactBWorld, &P, &w);
 				vector3AddScaled(wB, &w, bodyB->momentOfInertiaInv, wB);
@@ -312,6 +314,37 @@ void contactSolverPreSolve(struct ContactSolver* contactSolver) {
 	}
 }
 
+#define BREAK_DISTANCE	0.5f
+
+void contactSolverIterateConstraints(struct ContactSolver* contactSolver) {
+	struct PointConstraint* curr = contactSolver->firstPointConstraint;
+
+	struct PointConstraint* prev = NULL;
+
+	while (curr) {
+		if (!pointConstraintMoveToPoint(curr->object, &curr->targetPos, curr->maxPosImpulse, curr->teleportOnBreak, curr->movementScaleFactor)) {
+			struct PointConstraint* next = curr->nextConstraint;
+
+			if (prev) {
+				prev->nextConstraint = next;
+			} else {
+				contactSolver->firstPointConstraint = next;
+			}
+
+
+			curr->nextConstraint = NULL;
+			curr->object = NULL;
+
+			curr = next;
+			continue;
+		}
+
+		pointConstraintRotateTo(curr->object->body, &curr->targetRot, curr->maxRotImpulse);		
+
+		curr = curr->nextConstraint;
+	} 
+}
+
 void contactSolverIterate(struct ContactSolver* contactSolver) {
 	struct ContactManifold *cs = contactSolver->activeContacts;
 
@@ -330,7 +363,7 @@ void contactSolverIterate(struct ContactSolver* contactSolver) {
 		struct RigidBody* bodyA = cs->shapeA->body;
 		struct RigidBody* bodyB = cs->shapeB->body;
 
-		if (bodyA) {
+		if (bodyA && !(bodyA->flags & RigidBodyIsKinematic)) {
 			vA = &bodyA->velocity;
 			wA = &bodyA->angularVelocity;
 		} else {
@@ -338,7 +371,7 @@ void contactSolverIterate(struct ContactSolver* contactSolver) {
 			wA = NULL;
 		}
 
-		if (bodyB) {
+		if (bodyB && !(bodyB->flags & RigidBodyIsKinematic)) {
 			vB = &bodyB->velocity;
 			wB = &bodyB->angularVelocity;
 		} else {
@@ -452,6 +485,7 @@ void contactSolverIterate(struct ContactSolver* contactSolver) {
 
 
 void contactSolverSolve(struct ContactSolver* solver) {
+	contactSolverIterateConstraints(solver);
 	contactSolverPreSolve(solver);
 	for (int i = 0; i < SOLVER_ITERATIONS; ++i) {
 		contactSolverIterate(solver);
@@ -500,4 +534,29 @@ struct ContactManifold* contactSolverNextManifold(struct ContactSolver* solver, 
 	}
 
 	return NULL;
+}
+
+void contactSolverAddPointConstraint(struct ContactSolver* solver, struct PointConstraint* constraint) {
+    constraint->nextConstraint = solver->firstPointConstraint;
+    solver->firstPointConstraint = constraint;
+}
+
+void contactSolverRemovePointConstraint(struct ContactSolver* solver, struct PointConstraint* constraint) {
+    struct PointConstraint* prev = NULL;
+    struct PointConstraint* current = solver->firstPointConstraint;
+
+    while (current) {
+        if (current == constraint) {
+            if (prev) {
+                prev->nextConstraint = current->nextConstraint;
+            } else {
+                solver->firstPointConstraint = current->nextConstraint;
+            }
+
+            return;
+        }
+        
+        prev = current;
+        current = current->nextConstraint;
+    }
 }

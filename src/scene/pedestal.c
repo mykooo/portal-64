@@ -11,19 +11,28 @@
 struct Vector2 gMaxPedistalRotation;
 #define MAX_PEDISTAL_ROTATION_DEGREES_PER_SEC   (M_PI / 3.0f)
 
-void pedestalRender(void* data, struct RenderScene* renderScene) {
+void pedestalRender(void* data, struct DynamicRenderDataList* renderList, struct RenderState* renderState) {
     struct Pedestal* pedestal = (struct Pedestal*)data;
 
-    Mtx* matrix = renderStateRequestMatrices(renderScene->renderState, 1);
+    Mtx* matrix = renderStateRequestMatrices(renderState, 1);
+
+    if (!matrix) {
+        return;
+    }
+
     transformToMatrixL(&pedestal->transform, matrix, SCENE_SCALE);
 
-    Mtx* armature = renderStateRequestMatrices(renderScene->renderState, pedestal->armature.numberOfBones);
+    Mtx* armature = renderStateRequestMatrices(renderState, pedestal->armature.numberOfBones);
+
+    if (!armature) {
+        return;
+    }
 
     skCalculateTransforms(&pedestal->armature, armature);
 
-    Gfx* attachments = skBuildAttachments(&pedestal->armature, (pedestal->flags & PedestalFlagsDown) ? NULL : &w_portal_gun_gfx, renderScene->renderState);
+    Gfx* attachments = skBuildAttachments(&pedestal->armature, (pedestal->flags & PedestalFlagsDown) ? NULL : &w_portal_gun_gfx, renderState);
 
-    Gfx* objectRender = renderStateAllocateDLChunk(renderScene->renderState, 4);
+    Gfx* objectRender = renderStateAllocateDLChunk(renderState, 4);
     Gfx* dl = objectRender;
 
     if (attachments) {
@@ -33,8 +42,8 @@ void pedestalRender(void* data, struct RenderScene* renderScene) {
     gSPDisplayList(dl++, pedestal_model_gfx);
     gSPEndDisplayList(dl++);
 
-    renderSceneAdd(
-        renderScene,
+    dynamicRenderListAddData(
+        renderList,
         objectRender,
         matrix,
         DEFAULT_INDEX,
@@ -49,18 +58,13 @@ void pedestalInit(struct Pedestal* pedestal, struct PedestalDefinition* definiti
     pedestal->transform.position = definition->position;
     pedestal->roomIndex = definition->roomIndex;
 
-    skArmatureInit(
-        &pedestal->armature,
-        pedestal_model_gfx,
-        PEDESTAL_DEFAULT_BONES_COUNT,
-        pedestal_default_bones,
-        pedestal_bone_parent,
-        PEDESTAL_ATTACHMENT_COUNT
-    );
+    skArmatureInit(&pedestal->armature, &pedestal_armature);
 
-    skAnimatorInit(&pedestal->animator, PEDESTAL_DEFAULT_BONES_COUNT, NULL, NULL);
+    skAnimatorInit(&pedestal->animator, PEDESTAL_DEFAULT_BONES_COUNT);
 
-    pedestal->dynamicId = dynamicSceneAdd(pedestal, pedestalRender, &pedestal->transform, 0.8f);
+    pedestal->dynamicId = dynamicSceneAdd(pedestal, pedestalRender, &pedestal->transform.position, 0.8f);
+
+    dynamicSceneSetRoomFlags(pedestal->dynamicId, ROOM_FLAG_FROM_INDEX(definition->roomIndex));
 
     pedestal->flags = 0;
 
@@ -78,27 +82,44 @@ void pedestalDetermineHolderAngle(struct Pedestal* pedestal, struct Vector2* out
 }
 
 void pedestalUpdate(struct Pedestal* pedestal) {
-    skAnimatorUpdate(&pedestal->animator, pedestal->armature.boneTransforms, 1.0f);
+    skAnimatorUpdate(&pedestal->animator, pedestal->armature.pose, FIXED_DELTA_TIME);
 
     if (pedestal->flags & PedestalFlagsIsPointing) {
         struct Vector2 target;
         pedestalDetermineHolderAngle(pedestal, &target);
 
         if (vector2RotateTowards(&pedestal->currentRotation, &target, &gMaxPedistalRotation, &pedestal->currentRotation)) {
+            if (!(pedestal->flags & PedestalFlagsDown)){
+                soundPlayerPlay(soundsPedestalShooting, 5.0f, 0.5f, &pedestal->transform.position, &gZeroVec);
+            }
             pedestal->flags &= ~PedestalFlagsIsPointing;
         }
+        else{
+            if (!(pedestal->flags & PedestalFlagsAlreadyMoving) && !(pedestal->flags & PedestalFlagsDown)){
+                soundPlayerPlay(soundsPedestalMoving, 5.0f, 0.5f, &pedestal->transform.position, &gZeroVec);
+                pedestal->flags |= PedestalFlagsAlreadyMoving;
+            }
+        }
+        
+    }
+    else{
+        pedestal->flags &= ~PedestalFlagsAlreadyMoving;
     }
     
-    quatAxisComplex(&gUp, &pedestal->currentRotation, &pedestal->armature.boneTransforms[PEDESTAL_HOLDER_BONE].rotation);
+    quatAxisComplex(&gUp, &pedestal->currentRotation, &pedestal->armature.pose[PEDESTAL_HOLDER_BONE].rotation);
 }
 
 void pedestalHide(struct Pedestal* pedestal) {
+    soundPlayerPlay(soundsReleaseCube, 3.0f, 0.5f, &pedestal->transform.position, &gZeroVec);
     pedestal->flags |= PedestalFlagsDown;
-
-    skAnimatorRunClip(&pedestal->animator, &pedestal_animations[0], 0);
+    skAnimatorRunClip(&pedestal->animator, &pedestal_Armature_Hide_clip, 0.0f, 0);
 }
 
 void pedestalPointAt(struct Pedestal* pedestal, struct Vector3* target) {
     pedestal->pointAt = *target;
     pedestal->flags |= PedestalFlagsIsPointing;
+}
+
+void pedestalSetDown(struct Pedestal* pedestal) {
+    skAnimatorRunClip(&pedestal->animator, &pedestal_Armature_Hidden_clip, 0.0f, 0);
 }

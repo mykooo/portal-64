@@ -14,13 +14,14 @@ void signalsInit(unsigned signalCount) {
         return;
     }
 
-    int binCount = (signalCount + 63) >> 6;
+    int binCount = SIGNAL_BIN_COUNT(signalCount);
     gSignals = malloc(sizeof(unsigned long long) * binCount);
     gDefaultSignals = malloc(sizeof(unsigned long long) * binCount);
     gSignalCount = signalCount;
 
     for (int i = 0; i < binCount; ++i) {
         gDefaultSignals[i] = 0;
+        gSignals[i] = 0;
     }
 }
 
@@ -55,7 +56,7 @@ void signalsSend(unsigned signalIndex) {
         return;
     }
 
-    gSignals[bin] = (gSignals[bin] & ~mask) | (gDefaultSignals[bin] ^ mask);
+    gSignals[bin] = (gSignals[bin] & ~mask) | ((gDefaultSignals[bin] ^ mask) & mask);
 }
 
 void signalsSetDefault(unsigned signalIndex, int value) {
@@ -97,4 +98,10 @@ void signalsEvaluateSignals(struct SignalOperator* operator, unsigned count) {
     for (unsigned i = 0; i < count; ++i) {
         signalsEvaluateSignal(&operator[i]);
     }
+}
+
+void signalsSerializeRW(struct Serializer* serializer, SerializeAction action) {
+    int binCount = SIGNAL_BIN_COUNT(gSignalCount);
+    action(serializer, gSignals, sizeof(unsigned long long) * binCount);
+    action(serializer, gDefaultSignals, sizeof(unsigned long long) * binCount);
 }

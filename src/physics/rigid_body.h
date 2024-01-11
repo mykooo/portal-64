@@ -3,11 +3,15 @@
 
 #include "../math/basis.h"
 #include "../math/transform.h"
+#include "../math/mathf.h"
 #include "./collision.h"
+
+#define KILL_PLANE_Y    -10.0f
 
 #define RIGID_BODY_NO_ROOM  0xFFFF
 
 #define MAX_PORTAL_SPEED (1000.0f / 64.0f)
+#define PORTAL_EXIT_XY_CLAMP_DISTANCE (0.15f)
 
 enum RigidBodyFlags {
     RigidBodyFlagsInFrontPortal0 = (1 << 0),
@@ -57,7 +61,7 @@ void rigidBodyAppyImpulse(struct RigidBody* rigidBody, struct Vector3* worldPoin
 void rigidBodyUpdate(struct RigidBody* rigidBody);
 void rigidBodyVelocityAtLocalPoint(struct RigidBody* rigidBody, struct Vector3* localPoint, struct Vector3* worldVelocity);
 void rigidBodyVelocityAtWorldPoint(struct RigidBody* rigidBody, struct Vector3* worldPoint, struct Vector3* worldVelocity);
-void rigidBodyTeleport(struct RigidBody* rigidBody, struct Transform* from, struct Transform* to, int toRoom);
+void rigidBodyTeleport(struct RigidBody* rigidBody, struct Transform* from, struct Transform* to, struct Vector3* fromVelocity, struct Vector3* toVelocity, int toRoom);
 
 int rigidBodyCheckPortals(struct RigidBody* rigidBody);
 

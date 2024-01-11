@@ -1,5 +1,6 @@
 #include "decor_object_list.h"
 
+#include "../../build/assets/models/props/autoportal_frame/autoportal_frame.h"
 #include "../../build/assets/models/props/cylinder_test.h"
 #include "../../build/assets/models/cube/cube.h"
 #include "../../build/assets/models/props/radio.h"
@@ -77,7 +78,37 @@ struct DecorObjectDefinition gDecorObjectDefinitions[] = {
         .materialIndex = CUBE_INDEX,
         .materialIndexFizzled = CUBE_FIZZLED_INDEX,
         .soundClipId = -1,
+        .flags = DecorObjectFlagsImportant,
     },
+    [DECOR_TYPE_CUBE_UNIMPORTANT] = {
+        {
+            CollisionShapeTypeBox,
+            &gCubeCollisionBox,
+            0.0f,
+            0.5f,
+            &gCollisionBoxCallbacks,  
+        },
+        2.0f, 
+        0.55f,
+        &cube_cube_model_gfx[0],
+        .materialIndex = CUBE_INDEX,
+        .materialIndexFizzled = CUBE_FIZZLED_INDEX,
+        .soundClipId = -1,
+    },
+    [DECOR_TYPE_AUTOPORTAL_FRAME] = {
+        {
+            CollisionShapeTypeNone,
+            NULL,
+            0.0f,
+            0.0f,
+            NULL,  
+        },
+        0.0f, 
+        1.0f,
+        &props_autoportal_frame_autoportal_frame_model_gfx[0],
+        .materialIndex = AUTOPORTAL_FRAME_INDEX,
+        .soundClipId = -1,
+    }
 };
 
 struct DecorObjectDefinition* decorObjectDefinitionForId(int id) {
@@ -86,4 +117,14 @@ struct DecorObjectDefinition* decorObjectDefinitionForId(int id) {
     }
 
     return &gDecorObjectDefinitions[id];
+}
+
+int decorIdForObjectDefinition(struct DecorObjectDefinition* def) {
+    int result = def - gDecorObjectDefinitions;
+
+    if (result < 0 || result >= sizeof(gDecorObjectDefinitions) / sizeof(*gDecorObjectDefinitions)) {
+        return -1;
+    }
+
+    return result;
 }

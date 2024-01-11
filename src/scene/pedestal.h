@@ -4,10 +4,13 @@
 #include "../sk64/skelatool_armature.h"
 #include "../sk64/skelatool_animator.h"
 #include "../levels/level_definition.h"
+#include "../audio/soundplayer.h"
+#include "../audio/clips.h"
 
 enum PedestalFlags {
     PedestalFlagsDown = (1 << 0),
     PedestalFlagsIsPointing = (1 << 1),
+    PedestalFlagsAlreadyMoving  = (1 << 2),
 };
 
 struct Pedestal {
@@ -29,5 +32,7 @@ void pedestalUpdate(struct Pedestal* pedestal);
 
 void pedestalHide(struct Pedestal* pedestal);
 void pedestalPointAt(struct Pedestal* pedestal, struct Vector3* target);
+
+void pedestalSetDown(struct Pedestal* pedestal);
 
 #endif

@@ -16,10 +16,29 @@
 #include "pedestal.h"
 #include "signage.h"
 #include "box_dropper.h"
+#include "scene_animator.h"
+#include "switch.h"
+#include "ball_launcher.h"
+#include "ball_catcher.h"
+#include "portal_gun.h"
+
+struct SavedPortal {
+    struct Ray ray;
+    struct Vector3 transformUp;
+    int portalIndex;
+    int roomIndex;
+};
+
+enum SceneCheckpointState {
+    SceneCheckpointStateSaved,
+    SceneCheckpointStatePendingRender,
+    SceneCheckpointStateReady,
+};
 
 struct Scene {
     struct Camera camera;
     struct Player player;
+    struct PortalGun portalGun;
     struct Portal portals[2];
     struct Button* buttons;
     struct DecorObject** decor;
@@ -29,7 +48,13 @@ struct Scene {
     struct Pedestal* pedestals;
     struct Signage* signage;
     struct BoxDropper* boxDroppers;
+    struct Switch* switches;
     struct Vector3 freeCameraOffset;
+    struct SceneAnimator animator;
+    struct CollisionObject* dynamicColliders;
+    struct BallLauncher* ballLaunchers;
+    struct BallCatcher* ballCatchers;
+    struct SavedPortal savedPortal;
     OSTime cpuTime;
     OSTime lastFrameStart;
     OSTime lastFrameTime;
@@ -41,6 +66,15 @@ struct Scene {
     u8 pedestalCount;
     u8 signageCount;
     u8 boxDropperCount;
+    u8 switchCount;
+    u8 ballLancherCount;
+    u8 ballCatcherCount;
+
+    u8 last_portal_indx_shot;
+    u8 looked_wall_portalable_0;
+    u8 looked_wall_portalable_1;
+    u8 continuouslyAttemptingPortalOpen;
+    u8 checkpointState;
 };
 
 extern struct Scene gScene;
@@ -48,10 +82,12 @@ extern struct Scene gScene;
 struct GraphicsTask;
 
 void sceneInit(struct Scene* scene);
+void sceneInitNoPauseMenu(struct Scene* scene);
 void sceneRender(struct Scene* scene, struct RenderState* renderState, struct GraphicsTask* task);
 void sceneUpdate(struct Scene* scene);
+void sceneQueueCheckpoint(struct Scene* scene);
 
-int sceneFirePortal(struct Scene* scene, struct Ray* ray, struct Vector3* playerUp, int portalIndex, int roomIndex);
+int sceneFirePortal(struct Scene* scene, struct Ray* ray, struct Vector3* playerUp, int portalIndex, int roomIndex, int fromPlayer, int just_checking);
 void sceneClosePortal(struct Scene* scene, int portalIndex);
 
 #endif

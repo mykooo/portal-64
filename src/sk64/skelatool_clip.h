@@ -4,48 +4,24 @@
 #define SK_ANIMATION_EVENT_END      0xFFFF
 #define SK_ANIMATION_EVENT_START    0xFFFE
 
-enum SKBoneAttrMask {
-    SKBoneAttrMaskPosition = (1 << 0),
-    SKBoneAttrMaskRotation = (1 << 1),
-    SKBoneAttrMaskScale = (1 << 2),
+#define SK_ANIMATION_CLIP_DURATION(clip) ((clip)->nFrames / (clip)->fps)
 
-    SKBoneAttrMaskPositionConst = (1 << 4),
-    SKBoneAttrMaskRotationConst = (1 << 5),
-    SKBoneAttrMaskScaleConst = (1 << 6),
+struct SKU16Vector3 {
+    short x;
+    short y;
+    short z;
 };
 
-struct SKBoneKeyframe {
-    unsigned char boneIndex;
-    unsigned char usedAttributes;
-    // each bit set in usedAttributes has 3 entries here
-    short attributeData[];
+struct SKAnimationBoneFrame {
+    struct SKU16Vector3 position;
+    struct SKU16Vector3 rotation;
 };
 
-struct SKAnimationKeyframe {
-    unsigned short tick;
-    unsigned short boneCount;
-    struct SKBoneKeyframe bones[];
-};
-
-struct SKAnimationChunk {
-    unsigned short nextChunkSize;
-    unsigned short nextChunkTick;
-    unsigned short keyframeCount;
-    struct SKAnimationKeyframe keyframes[];
-};
-
-struct SKAnimationEvent {
-    unsigned short tick;
-    unsigned short id;
-};
-
-struct SKAnimationHeader {
-    unsigned short firstChunkSize;
-    unsigned short ticksPerSecond;
-    unsigned short maxTicks;
-    unsigned short numEvents;
-    struct SKAnimationChunk* firstChunk;
-    struct SKAnimationEvent* animationEvents;
+struct SKAnimationClip {
+    short nFrames;
+    short nBones;
+    struct SKAnimationBoneFrame* frames;
+    float fps;
 };
 
 #endif

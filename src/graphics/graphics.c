@@ -2,8 +2,6 @@
 #include "initgfx.h"
 #include "util/memory.h"
 
-#include "../controls/controller.h"
-
 struct GraphicsTask gGraphicsTasks[2];
 
 extern OSMesgQueue  gfxFrameMsgQ;
@@ -11,11 +9,11 @@ extern OSMesgQueue	*schedulerCommandQueue;
 
 void* gLevelSegment;
 
-#if WITH_GFX_VALIDATOR
+#if PORTAL64_WITH_GFX_VALIDATOR
 #include "../../gfxvalidator/validator.h"
 #endif
 
-#if WITH_DEBUGGER
+#if PORTAL64_WITH_DEBUGGER
 #include "../../debugger/debugger.h"
 #include "../../debugger/serial.h"
 
@@ -75,11 +73,6 @@ void graphicsCreateTask(struct GraphicsTask* targetTask, GraphicsCallback callba
     gDPPipeSync(renderState->dl++);
     gDPSetColorImage(renderState->dl++, G_IM_FMT_RGBA, G_IM_SIZ_16b, SCREEN_WD, osVirtualToPhysical(targetTask->framebuffer));
 
-    if (controllerGetButton(1, A_BUTTON)) {
-        gDPSetFillColor(renderState->dl++, 0);
-        gDPFillRectangle(renderState->dl++, 0, 0, SCREEN_WD-1, SCREEN_HT-1);
-    }
-
     gDPPipeSync(renderState->dl++);
     gDPSetCycleType(renderState->dl++, G_CYC_1CYCLE); 
 
@@ -124,18 +117,18 @@ void graphicsCreateTask(struct GraphicsTask* targetTask, GraphicsCallback callba
     scTask->next = 0;
     scTask->state = 0;
 
-#if WITH_GFX_VALIDATOR
-#if WITH_DEBUGGER
+#if PORTAL64_WITH_GFX_VALIDATOR
+#if PORTAL64_WITH_DEBUGGER
     struct GFXValidationResult validationResult;
     zeroMemory(&validationResult, sizeof(struct GFXValidationResult));
 
-    if (gfxValidate(&scTask->list, MAX_DL_LENGTH, &validationResult) != GFXValidatorErrorNone) {
+    if (gfxValidate(&scTask->list, renderStateMaxDLCount(renderState), &validationResult) != GFXValidatorErrorNone) {
         gfxGenerateReadableMessage(&validationResult, graphicsOutputMessageToDebugger);
         gdbBreak();
     }
 
-#endif // WITH_DEBUGGER
-#endif // WITH_GFX_VALIDATOR
+#endif // PORTAL64_WITH_DEBUGGER
+#endif // PORTAL64_WITH_GFX_VALIDATOR
 
     osSendMesg(schedulerCommandQueue, (OSMesg)scTask, OS_MESG_BLOCK);
 }

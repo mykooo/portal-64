@@ -28,21 +28,27 @@ void boxDropperFakePos(struct BoxDropper* dropper, struct Transform* result) {
 }
 
 
-void boxDropperRender(void* data, struct RenderScene* renderScene) {
+void boxDropperRender(void* data, struct DynamicRenderDataList* renderList, struct RenderState* renderState) {
     struct BoxDropper* dropper = (struct BoxDropper*)data;
 
-    if (!RENDER_SCENE_IS_ROOM_VISIBLE(renderScene, dropper->roomIndex)) {
+    Mtx* matrix = renderStateRequestMatrices(renderState, 1);
+
+    if (!matrix) {
         return;
     }
 
-    Mtx* matrix = renderStateRequestMatrices(renderScene->renderState, 1);
     transformToMatrixL(&dropper->transform, matrix, SCENE_SCALE);
 
-    Mtx* armature = renderStateRequestMatrices(renderScene->renderState, PROPS_BOX_DROPPER_DEFAULT_BONES_COUNT);
+    Mtx* armature = renderStateRequestMatrices(renderState, PROPS_BOX_DROPPER_DEFAULT_BONES_COUNT);
+
+    if (!armature) {
+        return;
+    }
+
     skCalculateTransforms(&dropper->armature, armature);
 
-    renderSceneAdd(
-        renderScene,
+    dynamicRenderListAddData(
+        renderList,
         props_box_dropper_model_gfx,
         matrix,
         box_dropper_material_index,
@@ -50,8 +56,8 @@ void boxDropperRender(void* data, struct RenderScene* renderScene) {
         armature
     );
 
-    renderSceneAdd(
-        renderScene, 
+    dynamicRenderListAddData(
+        renderList, 
         box_dropper_glass_gfx, 
         matrix, 
         box_dropper_glass_material_index, 
@@ -63,11 +69,16 @@ void boxDropperRender(void* data, struct RenderScene* renderScene) {
         struct Transform pendingCubePos;
         boxDropperFakePos(dropper, &pendingCubePos);
 
-        Mtx* pendingBoxMatrix = renderStateRequestMatrices(renderScene->renderState, 1);
+        Mtx* pendingBoxMatrix = renderStateRequestMatrices(renderState, 1);
+
+        if (!pendingBoxMatrix) {
+            return;
+        }
+
         transformToMatrixL(&pendingCubePos, pendingBoxMatrix, SCENE_SCALE);
 
-        renderSceneAdd(
-            renderScene, 
+        dynamicRenderListAddData(
+            renderList, 
             cube_cube_model_gfx, 
             pendingBoxMatrix, 
             CUBE_INDEX, 
@@ -78,7 +89,7 @@ void boxDropperRender(void* data, struct RenderScene* renderScene) {
 }
 
 void boxDropperInit(struct BoxDropper* dropper, struct BoxDropperDefinition* definition) {
-    dropper->dynamicId = dynamicSceneAdd(dropper, boxDropperRender, &dropper->transform, 1.5f);
+    dropper->dynamicId = dynamicSceneAdd(dropper, boxDropperRender, &dropper->transform.position, 1.5f);
 
     dropper->transform.position = definition->position;
     quatIdent(&dropper->transform.rotation);
@@ -87,23 +98,18 @@ void boxDropperInit(struct BoxDropper* dropper, struct BoxDropperDefinition* def
     dropper->roomIndex = definition->roomIndex;
     dropper->signalIndex = definition->signalIndex;
 
-    skArmatureInit(
-        &dropper->armature, 
-        props_box_dropper_model_gfx, 
-        PROPS_BOX_DROPPER_DEFAULT_BONES_COUNT, 
-        props_box_dropper_default_bones, 
-        props_box_dropper_bone_parent, 
-        PROPS_BOX_DROPPER_ATTACHMENT_COUNT
-    );
+    skArmatureInit(&dropper->armature, &props_box_dropper_armature);
 
-    skAnimatorInit(&dropper->animator, PROPS_BOX_DROPPER_DEFAULT_BONES_COUNT, NULL, NULL);
+    skAnimatorInit(&dropper->animator, PROPS_BOX_DROPPER_DEFAULT_BONES_COUNT);
 
     dropper->flags = 0;
     dropper->reloadTimer = DROOPER_RELOAD_TIME;
+
+    dynamicSceneSetRoomFlags(dropper->dynamicId, ROOM_FLAG_FROM_INDEX(dropper->roomIndex));
 }
 
 void boxDropperUpdate(struct BoxDropper* dropper) {
-    skAnimatorUpdate(&dropper->animator, dropper->armature.boneTransforms, 1.0f);
+    skAnimatorUpdate(&dropper->animator, dropper->armature.pose, FIXED_DELTA_TIME);
 
     if (dropper->reloadTimer > 0.0f) {
         dropper->reloadTimer -= FIXED_DELTA_TIME;
@@ -136,8 +142,9 @@ void boxDropperUpdate(struct BoxDropper* dropper) {
         struct Transform pendingCubePos;
         boxDropperFakePos(dropper, &pendingCubePos);
 
-        decorObjectInit(&dropper->activeCube, decorObjectDefinitionForId(DECOR_TYPE_CUBE), &pendingCubePos, dropper->roomIndex);
-        skAnimatorRunClip(&dropper->animator, &props_box_dropper_animations[PROPS_BOX_DROPPER_PROPS_BOX_DROPPER_ARMATURE_DROPCUBE_INDEX], 0);
+        decorObjectInit(&dropper->activeCube, decorObjectDefinitionForId(DECOR_TYPE_CUBE_UNIMPORTANT), &pendingCubePos, dropper->roomIndex);
+        skAnimatorRunClip(&dropper->animator, &props_box_dropper_Armature_DropCube_clip, 0.0f, 0);
+        soundPlayerPlay(soundsReleaseCube, 5.0f, 0.5f, &dropper->activeCube.rigidBody.transform.position, &gZeroVec);
 
         dropper->flags &= ~BoxDropperFlagsCubeRequested;
         dropper->flags |= BoxDropperFlagsCubeIsActive;

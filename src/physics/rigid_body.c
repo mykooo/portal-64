@@ -6,8 +6,6 @@
 #include "defs.h"
 #include <math.h>
 
-#define KILL_PLANE_Y    -10.0f
-
 void rigidBodyInit(struct RigidBody* rigidBody, float mass, float momentOfIniteria) {
     transformInitIdentity(&rigidBody->transform);
     rigidBody->velocity = gZeroVec;
@@ -84,6 +82,24 @@ float rigidBodyMassInverseAtLocalPoint(struct RigidBody* rigidBody, struct Vecto
     return rigidBody->massInv + rigidBody->momentOfInertiaInv * vector3MagSqrd(&crossPoint);
 }
 
+void rigidBodyClampToPortal(struct RigidBody* rigidBody, struct Transform* portal) {
+    struct Vector3 localPoint;
+
+    transformPointInverseNoScale(portal, &rigidBody->transform.position, &localPoint);
+
+    //clamping the x and y of local point to a slightly smaller oval on the output portal
+    struct Vector3 clampedLocalPoint;
+    clampedLocalPoint = localPoint;
+    clampedLocalPoint.y /= 2.0f;
+    clampedLocalPoint.z = 0.0f;
+    while(sqrtf(vector3MagSqrd(&clampedLocalPoint))>PORTAL_EXIT_XY_CLAMP_DISTANCE){
+        vector3Scale(&clampedLocalPoint, &clampedLocalPoint, 0.90f);
+    }
+    clampedLocalPoint.y *= 2.0f;
+    localPoint.x = clampedLocalPoint.x;
+    localPoint.y = clampedLocalPoint.y;
+    transformPoint(portal, &localPoint, &rigidBody->transform.position);
+}
 
 int rigidBodyCheckPortals(struct RigidBody* rigidBody) {
     if (!gCollisionScene.portalTransforms[0] || !gCollisionScene.portalTransforms[1]) {
@@ -95,6 +111,14 @@ int rigidBodyCheckPortals(struct RigidBody* rigidBody) {
     struct Vector3 localPoint;
 
     enum RigidBodyFlags newFlags = 0;
+
+    //if only touching one portal, clamp object to edges of that portal
+    if ((rigidBody->flags & RigidBodyIsTouchingPortalA) && !(rigidBody->flags & RigidBodyIsTouchingPortalB)){
+        rigidBodyClampToPortal(rigidBody, gCollisionScene.portalTransforms[0]);
+    }
+    else if ((rigidBody->flags & RigidBodyIsTouchingPortalB) && !(rigidBody->flags & RigidBodyIsTouchingPortalA)){
+        rigidBodyClampToPortal(rigidBody, gCollisionScene.portalTransforms[1]);
+    }
 
     if (rigidBody->flags & RigidBodyIsTouchingPortalA) {
         newFlags |= RigidBodyWasTouchingPortalA;
@@ -144,7 +168,7 @@ int rigidBodyCheckPortals(struct RigidBody* rigidBody) {
         }
 
         struct Transform* otherPortal = gCollisionScene.portalTransforms[1 - i];
-        rigidBodyTeleport(rigidBody, gCollisionScene.portalTransforms[i], otherPortal, gCollisionScene.portalRooms[1 - i]);
+        rigidBodyTeleport(rigidBody, gCollisionScene.portalTransforms[i], otherPortal, &gCollisionScene.portalVelocity[i], &gCollisionScene.portalVelocity[1 - i], gCollisionScene.portalRooms[1 - i]);
 
         float speedSqrd = vector3MagSqrd(&rigidBody->velocity);
 
@@ -174,7 +198,7 @@ int rigidBodyCheckPortals(struct RigidBody* rigidBody) {
     return result;
 }
 
-void rigidBodyTeleport(struct RigidBody* rigidBody, struct Transform* from, struct Transform* to, int toRoom) {
+void rigidBodyTeleport(struct RigidBody* rigidBody, struct Transform* from, struct Transform* to, struct Vector3* fromVelocity, struct Vector3* toVelocity, int toRoom) {
     struct Vector3 localPoint;
 
     transformPointInverseNoScale(from, &rigidBody->transform.position, &localPoint);
@@ -187,7 +211,13 @@ void rigidBodyTeleport(struct RigidBody* rigidBody, struct Transform* from, stru
     struct Quaternion rotationTransfer;
     quatMultiply(&to->rotation, &inverseARotation, &rotationTransfer);
 
-    quatMultVector(&rotationTransfer, &rigidBody->velocity, &rigidBody->velocity);
+    struct Vector3 relativeVelocity;
+    vector3Sub(&rigidBody->velocity, fromVelocity, &relativeVelocity);
+
+    quatMultVector(&rotationTransfer, &relativeVelocity, &relativeVelocity);
+
+    vector3Add(&relativeVelocity, toVelocity, &rigidBody->velocity);
+
     quatMultVector(&rotationTransfer, &rigidBody->angularVelocity, &rigidBody->angularVelocity);
 
     struct Quaternion newRotation;

@@ -6,8 +6,12 @@
 #include "../graphics/color.h"
 
 #include "../build/assets/models/props/signage.h"
+#include "../build/assets/models/props/signage_off.h"
 #include "../build/assets/models/props/cylinder_test.h"
 #include "../../build/assets/materials/static.h"
+
+                                                            
+#include <stdlib.h>   
 
 int gCurrentSignageIndex = -1;
 
@@ -59,13 +63,20 @@ enum LevelWarnings {
     LevelWarningsCake = (1 << 9),
 };
 
-char gLevelWarnings[] = {
+short gLevelWarnings[] = {
     LevelWarningsCubeDispense | LevelWarningsCubeHit,
     0,
     0,
     0,
     LevelWarningsCubeDispense | LevelWarningsCubeHit,
     LevelWarningsCubeHit,
+    LevelWarningsBallHit | LevelWarningsBallCollect,
+    LevelWarningsBallHit | LevelWarningsBallCollect,
+    LevelWarningsBallHit | LevelWarningsBallCollect | LevelWarningsLiquid | LevelWarningsDrinking,
+    LevelWarningsCubeDispense | LevelWarningsCubeHit,
+    LevelWarningsSpeedyIn | LevelWarningsSpeedyOut,
+    LevelWarningsBallHit | LevelWarningsBallCollect | LevelWarningsLiquid | LevelWarningsDrinking,
+    LevelWarningsCubeDispense | LevelWarningsCubeHit | LevelWarningsSpeedyIn | LevelWarningsSpeedyOut,
 };
 
 static struct Coloru8 gSignageOnColor = {0, 0, 0, 255};
@@ -80,56 +91,77 @@ void signageSetWarnings(int warningMask) {
             ((Vtx*)K0_TO_K1(gWarningVertices[i]))[vIndex].v.cn[1] = useColor.g;
             ((Vtx*)K0_TO_K1(gWarningVertices[i]))[vIndex].v.cn[2] = useColor.b;
             ((Vtx*)K0_TO_K1(gWarningVertices[i]))[vIndex].v.cn[3] = useColor.a;
+
         }
+        
     }
 }
 
 void signageCheckIndex(int neededIndex) {
-    if (gCurrentSignageIndex == neededIndex) {
-        return;
-    }
+        if (gCurrentSignageIndex == neededIndex) {
+            return;
+        }
 
-    if (gCurrentSignageIndex == -1) {
-        gCurrentSignageIndex = 0;
-    }
+        if (gCurrentSignageIndex == -1) {
+            gCurrentSignageIndex = 0;
+        }
 
-    int prevTenDigit = gCurrentSignageIndex / 10;
-    int prevOneDigit = gCurrentSignageIndex - prevTenDigit * 10; 
+        int prevTenDigit = gCurrentSignageIndex / 10;
+        int prevOneDigit = gCurrentSignageIndex - prevTenDigit * 10; 
 
-    int tenDigit = neededIndex / 10;
-    int oneDigit = neededIndex - tenDigit * 10;
-    
-    gCurrentSignageIndex = neededIndex;
+        int tenDigit = neededIndex / 10;
+        int oneDigit = neededIndex - tenDigit * 10;
+        
+        gCurrentSignageIndex = neededIndex;
+        signageSetLargeDigit(props_signage_signage_num00_digit_0_color, oneDigit, prevOneDigit);
+        signageSetLargeDigit(props_signage_signage_num00_digit_10_color, tenDigit, prevTenDigit);
+        signageSetSmallDigit(props_signage_signage_num00_sdigit_0_color, oneDigit, prevOneDigit);
+        signageSetSmallDigit(props_signage_signage_num00_sdigit_10_color, tenDigit, prevTenDigit);
 
-    signageSetLargeDigit(props_signage_signage_num00_digit_0_color, oneDigit, prevOneDigit);
-    signageSetLargeDigit(props_signage_signage_num00_digit_10_color, tenDigit, prevTenDigit);
-
-    signageSetSmallDigit(props_signage_signage_num00_sdigit_0_color, oneDigit, prevOneDigit);
-    signageSetSmallDigit(props_signage_signage_num00_sdigit_10_color, tenDigit, prevTenDigit);
-
-    signageSetWarnings(gLevelWarnings[neededIndex]);
+        signageSetWarnings(gLevelWarnings[neededIndex]);
 }
 
-void signageRender(void* data, struct RenderScene* renderScene) {
+void signageRender(void* data, struct DynamicRenderDataList* renderList, struct RenderState* renderState) {
     struct Signage* signage = (struct Signage*)data;
 
-    if (!RENDER_SCENE_IS_ROOM_VISIBLE(renderScene, signage->roomIndex)) {
+    float n = ((float)rand()/RAND_MAX)*(float)(1.0); 
+    int signOn = 1;
+    if (n <= signage->flickerChance){signOn = 0;}
+    if (signage->flickerChance > 0.0001){signage->flickerChance = signage->flickerChance*0.97;}
+    if (signOn){signageCheckIndex(signage->testChamberNumber);}
+
+    Mtx* matrix = renderStateRequestMatrices(renderState, 1);
+
+    if (!matrix) {
         return;
     }
 
-    signageCheckIndex(signage->testChamberNumber);
-
-    Mtx* matrix = renderStateRequestMatrices(renderScene->renderState, 1);
     transformToMatrixL(&signage->transform, matrix, SCENE_SCALE);
 
-    renderSceneAdd(
-        renderScene,
+    
+    if (signOn){
+        dynamicRenderListAddData(
+        renderList,
         props_signage_model_gfx,
         matrix,
         DEFAULT_INDEX,
         &signage->transform.position,
         NULL
-    );
+        );
+    }
+    else{
+        dynamicRenderListAddData(
+        renderList,
+        props_signage_off_model_gfx,
+        matrix,
+        DEFAULT_INDEX,
+        &signage->transform.position,
+        NULL
+        );
+    }
+
+
+
 }
 
 void signageInit(struct Signage* signage, struct SignageDefinition* definition) {
@@ -138,6 +170,9 @@ void signageInit(struct Signage* signage, struct SignageDefinition* definition) 
     signage->transform.scale = gOneVec;
     signage->roomIndex = definition->roomIndex;
     signage->testChamberNumber = definition->testChamberNumber;
+    signage->flickerChance = 1.0;
 
-    dynamicSceneAdd(signage, signageRender, &signage->transform, 1.7f);
+    int dynamicId = dynamicSceneAdd(signage, signageRender, &signage->transform.position, 1.7f);
+
+    dynamicSceneSetRoomFlags(dynamicId, ROOM_FLAG_FROM_INDEX(definition->roomIndex));
 }

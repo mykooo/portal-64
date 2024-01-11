@@ -27,6 +27,8 @@ bool parseCommandLineArguments(int argc, char *argv[], struct CommandLineArgumen
     output.mEulerAngles = aiVector3D(0.0f, 0.0f, 0.0f);
     output.mDefaultMaterial = "default";
     output.mForceMaterialName = "";
+    output.mProcessAsModel = false;
+    output.mFPS = 30.0f;
 
     std::string lastParameter = "";
     bool hasError = false;
@@ -60,6 +62,8 @@ bool parseCommandLineArguments(int argc, char *argv[], struct CommandLineArgumen
                 output.mForcePallete = curr;
             } else if (lastParameter == "script") {
                 output.mScriptFiles.push_back(curr);
+            } else if (lastParameter == "fps") {
+                output.mFPS = (float)atof(curr);
             }
 
             lastParameter = "";
@@ -96,9 +100,6 @@ bool parseCommandLineArguments(int argc, char *argv[], struct CommandLineArgumen
             output.mExportGeometry = false;
         } else if (strcmp(curr, "--boneless") == 0) {
             output.mBonesAsVertexGroups = true;
-        } else if (strcmp(curr, "--level") == 0) {
-                    output.mOutputType = FileOutputType::Level;
-                    output.mExportAnimation = false;
         } else if (strcmp(curr, "--default-material") == 0) {
             lastParameter = "default-material";
         } else if (strcmp(curr, "--force-material") == 0) {
@@ -108,6 +109,10 @@ bool parseCommandLineArguments(int argc, char *argv[], struct CommandLineArgumen
             lastParameter = "script";
         } else if (strcmp(curr, "--ci-buffer") == 0) {
             output.mTargetCIBuffer = true;
+        } else if (strcmp(curr, "--model") == 0) {
+            output.mProcessAsModel = true;
+        } else if (strcmp(curr, "--fps") == 0) {
+            lastParameter = "fps";
         } else {
             if (curr[0] == '-') {
                 hasError = true;
