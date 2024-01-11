@@ -1,0 +1,11 @@
+*.o
+.vscode/
+*.elf
+*.map
+*.z64
+
+build/
+debugger
+assets/
+
+tools/skeletool64
