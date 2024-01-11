@@ -1,6 +1,7 @@
 # Portal64
 
 ## ⚠ This project is no longer maintained by the original author!
+### This project is no longer maintained by the original author! This repository serves as an archive for all those who want to fork and develop it further.
 ![](./assets/images/nintendo-valve-dmca-takedown.jpeg)
 
 <br />
