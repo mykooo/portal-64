@@ -20,6 +20,7 @@ struct DisplayListSettings {
     unsigned short mTicksPerSecond;
     std::map<std::string, std::shared_ptr<Material>> mMaterials;
     std::string mDefaultMaterialName;
+    std::string mForceMaterialName;
     MaterialState mDefaultMaterialState;
     aiQuaternion mRotateModel;
     bool mExportAnimation;
@@ -28,6 +29,8 @@ struct DisplayListSettings {
 
     aiMatrix4x4 CreateGlobalTransform() const;
     aiMatrix4x4 CreateCollisionTransform() const;
+
+    bool NeedsTangents() const;
 };
 
 #endif

@@ -458,6 +458,15 @@
                         },
                         "twoTone": {
                             "type": "boolean"
+                        },
+                        "normalMap": {
+                            "type": "boolean"
+                        },
+                        "invert": {
+                            "type": "boolean"
+                        },
+                        "selectChannel": {
+                            "enum": ["r", "g", "b"]
                         }
                     },
                     "required": [
@@ -688,6 +697,9 @@
                             "type": "string"
                         }]
                     }
+                },
+                "normalSource": {
+                    "enum": ["normal", "tangent", "-tangent", "bitangent", "-bitangent"]
                 }
             }
         }
