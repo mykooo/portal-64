@@ -15,6 +15,9 @@
 #include "../audio/soundplayer.h"
 #include "../audio/clips.h"
 
+#include "../effects/effect_definitions.h"
+#include "./scene.h"
+
 #define BALL_RADIUS 0.1f
 
 struct CollisionBox gBallCollisionBox = {
@@ -105,6 +108,7 @@ void ballInit(struct Ball* ball, struct Vector3* position, struct Vector3* veloc
     ball->rigidBody.currentRoom = startingRoom;
     ball->flags = 0;
     ball->lifetime = ballLifetime;
+    ball->originalLifetime = ballLifetime;
 
     ball->targetSpeed = sqrtf(vector3MagSqrd(&ball->rigidBody.velocity));
 
@@ -112,7 +116,7 @@ void ballInit(struct Ball* ball, struct Vector3* position, struct Vector3* veloc
 
     dynamicSceneSetRoomFlags(ball->dynamicId, ROOM_FLAG_FROM_INDEX(startingRoom));
 
-    ball->soundLoopId = soundPlayerPlay(soundsBallLoop, 1.0f, 1.0f, &ball->rigidBody.transform.position, &ball->rigidBody.velocity);
+    ball->soundLoopId = soundPlayerPlay(soundsBallLoop, 1.5f, 1.0f, &ball->rigidBody.transform.position, &ball->rigidBody.velocity, SoundTypeAll);
 }
 
 void ballTurnOnCollision(struct Ball* ball) {
@@ -121,7 +125,23 @@ void ballTurnOnCollision(struct Ball* ball) {
 
 void ballInitBurn(struct Ball* ball, struct ContactManifold* manifold) {
     if (!manifold || manifold->contactCount == 0) {
+        ball->flags &= ~BallJustBounced;
         return;
+    }
+
+    if (!(ball->flags & BallJustBounced)) {
+        struct Vector3 normal = manifold->normal;
+        if (&ball->collisionObject == manifold->shapeA) {
+            vector3Negate(&normal, &normal);
+        }
+        effectsSplashPlay(&gScene.effects, &gBallBounce, &ball->rigidBody.transform.position, &manifold->normal);
+        struct Vector3 position = manifold->contacts[0].contactAWorld;
+        if (manifold->shapeA->body) {
+            transformPoint(&manifold->shapeA->body->transform, &position, &position);
+        }
+        soundPlayerPlay(soundsBallBounce, 1.5f, 1.0f, &position, &gZeroVec, SoundTypeAll);
+        hudShowSubtitle(&gScene.hud, ENERGYBALL_IMPACT, SubtitleTypeCaption);
+        ball->flags |= BallJustBounced;
     }
 
     // only add burn marks to static objects
@@ -151,12 +171,14 @@ void ballInitBurn(struct Ball* ball, struct ContactManifold* manifold) {
         burn->dynamicId = dynamicSceneAdd(burn, ballBurnRender, &burn->at, 0.2f);
     }
 
-    quatLook(&manifold->normal, &gUp, &burnTransform.rotation);
+    if (fabsf(manifold->normal.y) > 0.714f) {
+        quatLook(&manifold->normal, &gRight, &burnTransform.rotation);
+    } else {
+        quatLook(&manifold->normal, &gUp, &burnTransform.rotation);
+    }
     burnTransform.scale = gOneVec;
 
     transformToMatrixL(&burnTransform, &burn->matrix, SCENE_SCALE);
-
-    soundPlayerPlay(soundsBallBounce, 1.0f, 1.0f, &burnTransform.position, &gZeroVec);
 
     burn->at = burnTransform.position;
     burn->normal = manifold->normal;
@@ -165,6 +187,10 @@ void ballInitBurn(struct Ball* ball, struct ContactManifold* manifold) {
 void ballUpdate(struct Ball* ball) {
     if (ball->targetSpeed == 0.0f || ballIsCaught(ball)) {
         return;
+    }
+
+    if (ball->rigidBody.flags & (RigidBodyFlagsCrossedPortal0 | RigidBodyFlagsCrossedPortal1)){
+        ball->lifetime = ball->originalLifetime;
     }
 
     float currentSpeed = sqrtf(vector3MagSqrd(&ball->rigidBody.velocity));
@@ -189,7 +215,9 @@ void ballUpdate(struct Ball* ball) {
             collisionSceneRemoveDynamicObject(&ball->collisionObject);
             dynamicSceneRemove(ball->dynamicId);
             soundPlayerStop(ball->soundLoopId);
-            soundPlayerPlay(soundsBallExplode, 1.0f, 1.0f, &ball->rigidBody.transform.position, &gZeroVec);
+            soundPlayerPlay(soundsBallExplode, 2.0f, 1.0f, &ball->rigidBody.transform.position, &gZeroVec, SoundTypeAll);
+            hudShowSubtitle(&gScene.hud, ENERGYBALL_EXPLOSION, SubtitleTypeCaption);
+            effectsSplashPlay(&gScene.effects, &gBallBurst, &ball->rigidBody.transform.position, &gUp);
             ball->soundLoopId = SOUND_ID_NONE;
         }
     }

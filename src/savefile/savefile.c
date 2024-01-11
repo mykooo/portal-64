@@ -4,6 +4,7 @@
 #include "controls/controller.h"
 
 #include "../controls/controller_actions.h"
+#include "../build/src/audio/subtitles.h"
 
 struct SaveData __attribute__((aligned(8))) gSaveData;
 int gCurrentTestSubject = -1;
@@ -34,7 +35,7 @@ void savefileSramSave(void* dst, void* src, int size) {
 
     OSIoMesg dmaIoMesgBuf;
 
-    // save chechpoint
+    // save checkpoint
     dmaIoMesgBuf.hdr.pri = OS_MESG_PRI_HIGH;
     dmaIoMesgBuf.hdr.retQueue = &dmaMessageQ;
     dmaIoMesgBuf.dramAddr = src;
@@ -91,11 +92,18 @@ void savefileNew() {
 
     controllerSetDefaultSource();
     gSaveData.controls.flags = 0;
-    gSaveData.controls.sensitivity = 0x7FFF;
-    gSaveData.controls.acceleration = 0x7FFF;
+    gSaveData.controls.flags |= ControlSavePortalFunneling;
+    gSaveData.controls.sensitivity = 0x4000;
+    gSaveData.controls.acceleration = 0x4000;
+    gSaveData.controls.deadzone = 0x4000;
+    gSaveData.controls.portalRenderDepth = 2;
+    gSaveData.controls.subtitleLanguage = LANGUAGE_ENGLISH;
 
-    gSaveData.audio.soundVolume = 0xFF;
-    gSaveData.audio.musicVolume = 0xFF;
+    gSaveData.audio.soundVolume = 0xFFFF;
+    gSaveData.audio.musicVolume = 0x8000;
+    gSaveData.audio.audioLanguage = 0;
+
+    controllerSetDeadzone(gSaveData.controls.deadzone * (1.0f / 0xFFFF) * MAX_DEADZONE);
 }
 
 void savefileLoad() {
@@ -136,6 +144,8 @@ void savefileLoad() {
     if (gSaveData.header.header != SAVEFILE_HEADER) {
         savefileNew();
     }
+
+    controllerSetDeadzone(gSaveData.controls.deadzone * (1.0f / 0xFFFF) * MAX_DEADZONE);
 }
 
 void savefileSave() {

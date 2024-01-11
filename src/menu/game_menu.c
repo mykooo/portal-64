@@ -8,8 +8,7 @@
 #include "../build/assets/materials/ui.h"
 #include "../scene/render_plan.h"
 #include "../controls/controller.h"
-
-#include "../build/assets/test_chambers/test_chamber_00/test_chamber_00.h"
+#include "./translations.h"
 
 void gameMenuInit(struct GameMenu* gameMenu, struct LandingMenuOption* options, int optionCount, int darkenBackground) {
     landingMenuInit(&gameMenu->landingMenu, options, optionCount, darkenBackground);
@@ -20,10 +19,20 @@ void gameMenuInit(struct GameMenu* gameMenu, struct LandingMenuOption* options, 
     optionsMenuInit(&gameMenu->optionsMenu);
 
     gameMenu->state = GameMenuStateLanding;
+    gameMenu->currentRenderedLanguage = translationsCurrentLanguage();
 }
 
-enum GameMenuState gameMenuDirectionToState(enum MenuDirection direction, enum GameMenuState currentState) {
-    if (direction == MenuDirectionUp) {
+void gameMenuRebuildText(struct GameMenu* gameMenu) {
+    if (gameMenu->currentRenderedLanguage != translationsCurrentLanguage()) {
+        newGameRebuildText(&gameMenu->newGameMenu);
+        landingMenuRebuildText(&gameMenu->landingMenu);
+        optionsMenuRebuildText(&gameMenu->optionsMenu);
+        gameMenu->currentRenderedLanguage = translationsCurrentLanguage();
+    }
+}
+
+enum GameMenuState gameInputCaptureToState(enum InputCapture direction, enum GameMenuState currentState) {
+    if (direction == InputCaptureExit) {
         return GameMenuStateLanding;
     }
 
@@ -45,16 +54,16 @@ void gameMenuUpdate(struct GameMenu* gameMenu) {
             break;
         }
         case GameMenuStateNewGame:
-            gameMenu->state = gameMenuDirectionToState(newGameUpdate(&gameMenu->newGameMenu), gameMenu->state);
+            gameMenu->state = gameInputCaptureToState(newGameUpdate(&gameMenu->newGameMenu), gameMenu->state);
             break;
         case GameMenuStateLoadGame:
-            gameMenu->state = gameMenuDirectionToState(loadGameUpdate(&gameMenu->loadGameMenu), gameMenu->state);
+            gameMenu->state = gameInputCaptureToState(loadGameUpdate(&gameMenu->loadGameMenu), gameMenu->state);
             break;
         case GameMenuStateSaveGame:
-            gameMenu->state = gameMenuDirectionToState(saveGameUpdate(&gameMenu->saveGameMenu), gameMenu->state);
+            gameMenu->state = gameInputCaptureToState(saveGameUpdate(&gameMenu->saveGameMenu), gameMenu->state);
             break;
         case GameMenuStateOptions:
-            gameMenu->state = gameMenuDirectionToState(optionsMenuUpdate(&gameMenu->optionsMenu), gameMenu->state);
+            gameMenu->state = gameInputCaptureToState(optionsMenuUpdate(&gameMenu->optionsMenu), gameMenu->state);
             break;
         default:
             break;

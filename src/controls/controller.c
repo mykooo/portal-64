@@ -3,8 +3,12 @@
 #include "defs.h"
 #include "util/memory.h"
 #include <sched.h>
+#include "rumble_pak.h"
+#include "../util/profile.h"
 
-// 0 = disable 1 = record 2 = playbakc
+#include <string.h>
+
+// 0 = disable, 1 = record, 2 = playback
 #define CONTROLLER_LOG_CONTROLLER_DATA  0
 
 #if CONTROLLER_LOG_CONTROLLER_DATA
@@ -13,17 +17,33 @@
 
 #define MAX_PLAYERS 4
 
-static u8    validcontrollers = 0;
-static u8    cntrlReadInProg  = 0;
+enum ControllerEventType {
+    ControllerEventTypeNone,
+    ControllerEventTypeData,
+    ControllerEventTypeStatus,
+};
+
+enum RumblepakState {
+    RumblepakStateDisconnected,
+    RumplepakStateUninitialized,
+    RumblepakStateInitialized,
+};
+
+static u8 gValidControllers = 0;
+static u8 gRumblePakState;
+static u8 gRumblePakOn;
+
+static OSPfs gRumbleBackFs;
 
 static OSContStatus  gControllerStatus[MAX_PLAYERS];
 static OSContPad     gControllerData[MAX_PLAYERS];
-OSScMsg       gControllerMessage;
 static u16           gControllerLastButton[MAX_PLAYERS];
 static enum ControllerDirection gControllerLastDirection[MAX_PLAYERS];
 static int gControllerDeadFrames;
+static int gTargetRumbleState;
 
-extern OSMesgQueue gfxFrameMsgQ;
+static OSMesgQueue gControllerDataQueue;
+static OSMesg gControllerDataMesg;
 
 #define REMAP_PLAYER_INDEX(index)   (index)
 // #define REMAP_PLAYER_INDEX(index)   0
@@ -40,65 +60,23 @@ int controllerIsConnected(int index) {
     return !gControllerStatus[index].errno;
 }
 
-void controllersListen() {
-    /**** Set up message and queue, for read completion notification ****/
-    gControllerMessage.type = SIMPLE_CONTROLLER_MSG;
-    osSetEventMesg(OS_EVENT_SI, &gfxFrameMsgQ, (OSMesg)&gControllerMessage);
-}
+u8 gRumbleFailCount;
 
-void controllersInit(void)
-{
-    OSMesgQueue         serialMsgQ;
-    OSMesg              serialMsg;
-    s32                 i;
-
-    osCreateMesgQueue(&serialMsgQ, &serialMsg, 1);
-    osSetEventMesg(OS_EVENT_SI, &serialMsgQ, (OSMesg)1);
-
-    if((i = osContInit(&serialMsgQ, &validcontrollers, &gControllerStatus[0])) != 0)
-        return;
-    
-    /**** Set up message and queue, for read completion notification ****/
-    gControllerMessage.type = SIMPLE_CONTROLLER_MSG;
-    osSetEventMesg(OS_EVENT_SI, &gfxFrameMsgQ, (OSMesg)&gControllerMessage);
-}
-
-
-void controllersReadPendingData(void) {
-    osContGetReadData(gControllerData);
-    cntrlReadInProg = 0;
-
-    if (gControllerDeadFrames) {
-        --gControllerDeadFrames;
-        zeroMemory(gControllerData, sizeof(gControllerData));
-    }
-
-    for (unsigned i = 0; i < MAX_PLAYERS; ++i) {
-        if (gControllerStatus[i].errno & CONT_NO_RESPONSE_ERROR) {
-            zeroMemory(&gControllerData[i], sizeof(OSContPad));
-        }
-    }
-}
-
-void controllersSavePreviousState(void) {
+void controllersSavePreviousState() {
     for (unsigned i = 0; i < MAX_PLAYERS; ++i) {
         gControllerLastDirection[i] = controllerGetDirection(i);
         gControllerLastButton[i] = gControllerData[i].button;
     }
 }
 
-int controllerHasPendingMessage() {
-    return cntrlReadInProg;
-}
-
 #define CONTROLLER_READ_SKIP_NUMBER 10
 
-void controllersTriggerRead(void) {
-    if (validcontrollers && !cntrlReadInProg) {
-        cntrlReadInProg = CONTROLLER_READ_SKIP_NUMBER;
-        osContStartReadData(&gfxFrameMsgQ);
-    } else if (cntrlReadInProg) {
-        --cntrlReadInProg;
+void controllersTriggerRead() {
+    gTargetRumbleState = rumblePakCalculateState();
+
+    OSMesg msg;
+    if (osRecvMesg(&gControllerDataQueue, &msg, OS_MESG_NOBLOCK) == 0) {
+        memCopy(&gControllerData, msg, sizeof(gControllerData));
     }
 }
 
@@ -172,4 +150,127 @@ void controllerHandlePlayback() {
         ++currentFrame;
     }
 #endif
+}
+
+void controllerCheckRumble(int prevStatus, OSMesgQueue* serialMsgQ) {
+    if ((prevStatus != CONT_CARD_ON && gControllerStatus[0].status == CONT_CARD_ON && gRumblePakState == RumblepakStateDisconnected) || gRumblePakState == RumplepakStateUninitialized) {
+        if (osMotorInit(serialMsgQ, &gRumbleBackFs, 0) == 0) {
+            gRumblePakState = RumblepakStateInitialized;
+        } else {
+            gRumblePakState = RumblepakStateDisconnected;
+        }
+    } if (gControllerStatus[0].status != CONT_CARD_ON) {
+        gRumblePakState = RumblepakStateDisconnected;
+    }
+
+    if (gRumblePakState == RumblepakStateInitialized) {
+        if (gTargetRumbleState != gRumblePakOn) {
+            for (int i = 0; i < 3; ++i) {
+                s32 rumbleError = gTargetRumbleState ? osMotorStart(&gRumbleBackFs) : osMotorStop(&gRumbleBackFs);
+
+                if (rumbleError == PFS_ERR_CONTRFAIL) {
+                    if (i == 2) {
+                        ++gRumbleFailCount;
+                    }
+                } else if (rumbleError != 0) {
+                    gRumblePakState = RumblepakStateDisconnected;
+                    break;
+                } else {
+                    gRumblePakOn = gTargetRumbleState;
+                    gRumbleFailCount = 0;
+                    break;
+                }
+            }
+        } else if (!gTargetRumbleState) {
+            osMotorStop(&gRumbleBackFs);
+        }
+
+        if (gRumbleFailCount >= 3) {
+            gRumbleFailCount = 0;
+            
+            if (osMotorInit(serialMsgQ, &gRumbleBackFs, 0) == 0) {
+                gRumblePakState = RumblepakStateInitialized;
+            } else {
+                gRumblePakState = RumplepakStateUninitialized;
+            }
+        }
+    }
+}
+
+static void controllerThreadLoop(void* arg) {
+    OSMesgQueue         serialMsgQ;
+    OSMesg              serialMsg;
+
+    osCreateMesgQueue(&serialMsgQ, &serialMsg, 1);
+    osSetEventMesg(OS_EVENT_SI, &serialMsgQ, (OSMesg)1);
+
+    OSContPad     controllerData[MAX_PLAYERS];
+
+    for (;;) {
+        OSMesg msgRead;
+        // read the controller
+        osContStartReadData(&serialMsgQ);
+        osRecvMesg(&serialMsgQ, &msgRead, OS_MESG_BLOCK);
+        osContGetReadData(&controllerData[0]);
+
+        if (gControllerDeadFrames) {
+            --gControllerDeadFrames;
+            zeroMemory(controllerData, sizeof(controllerData));
+        }
+
+        // ingore controllers that aren't connected
+        for (unsigned i = 0; i < MAX_PLAYERS; ++i) {
+            if (gControllerStatus[i].errno & CONT_NO_RESPONSE_ERROR) {
+                zeroMemory(&controllerData[i], sizeof(OSContPad));
+            }
+        }
+
+        // add controller data to queue and block until it is recieved
+        osSendMesg(&gControllerDataQueue, &controllerData, OS_MESG_BLOCK);
+
+        int prevStatus = gControllerStatus[0].status;
+
+        // check the controller status
+        osContStartQuery(&serialMsgQ);
+        osRecvMesg(&serialMsgQ, &msgRead, OS_MESG_BLOCK);
+        osContGetQuery(&gControllerStatus[0]);
+
+        controllerCheckRumble(prevStatus, &serialMsgQ);
+    }
+}
+
+#define CONTROLLER_STACK_SIZE_BYTES 2048
+
+static OSThread controllerThread;
+static u64 controllerThreadStack[CONTROLLER_STACK_SIZE_BYTES/sizeof(u64)];
+
+void controllersInit()
+{
+    OSMesgQueue         serialMsgQ;
+    OSMesg              serialMsg;
+    s32                 i;
+
+    osCreateMesgQueue(&serialMsgQ, &serialMsg, 1);
+    osSetEventMesg(OS_EVENT_SI, &serialMsgQ, (OSMesg)1);
+
+    if((i = osContInit(&serialMsgQ, &gValidControllers, &gControllerStatus[0])) != 0)
+        return;
+
+    if (gControllerStatus[0].status == CONT_CARD_ON) {
+        gRumblePakState = RumplepakStateUninitialized;
+        gRumblePakOn = 0;
+    }
+
+    osCreateMesgQueue(&gControllerDataQueue, &gControllerDataMesg, 1);
+
+    osCreateThread(
+        &controllerThread, 
+        6, 
+        controllerThreadLoop, 
+        0, 
+        controllerThreadStack + (CONTROLLER_STACK_SIZE_BYTES/sizeof(u64)),
+        (OSPri)CONTROLLER_PRIORITY
+    );
+
+    osStartThread(&controllerThread);
 }

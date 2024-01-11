@@ -139,15 +139,18 @@ void contactSolverCheckPortalManifoldContacts(struct ContactManifold* manifold) 
 		++writeIndex;
 	}
 
-	manifold->contactCount = writeIndex;
+	if (writeIndex != manifold->contactCount) {
+		manifold->contactCount = writeIndex;
+		manifold->shapeB->body->flags &= ~RigidBodyIsSleeping;
+	}
 }
 
-void contactSolverCheckPortalContacts(struct ContactSolver* contactSolver, struct CollisionObject* objectWithNewPortal) {	
+void contactSolverCheckPortalContacts(struct ContactSolver* contactSolver) {	
 	struct ContactManifold* curr = contactSolver->activeContacts;
 	struct ContactManifold* prev = NULL;
 
 	while (curr) {
-		if (curr->shapeA == objectWithNewPortal) {
+		if (curr->shapeA->body == NULL) {
 			contactSolverCheckPortalManifoldContacts(curr);
 		}
 
@@ -330,7 +333,7 @@ void contactSolverIterateConstraints(struct ContactSolver* contactSolver) {
 	struct PointConstraint* prev = NULL;
 
 	while (curr) {
-		if (!pointConstraintMoveToPoint(curr->object, &curr->targetPos, curr->maxPosImpulse, curr->teleportOnBreak, curr->movementScaleFactor)) {
+		if (!pointConstraintMoveToPoint(curr->object, &curr->targetPos, curr->maxPosImpulse, curr->movementScaleFactor)) {
 			struct PointConstraint* next = curr->nextConstraint;
 
 			if (prev) {

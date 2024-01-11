@@ -5,11 +5,11 @@
 #include "../font/font.h"
 
 struct Tab {
-    char* message;
+    short messageId;
 };
 
 struct TabRenderData {
-    Gfx* text;
+    struct PrerenderedText* text;
     short width;
     short x;
 };
@@ -23,12 +23,14 @@ struct Tabs {
     short selectedTab;
     short x;
     short y;
+    short prevOffset;
     Gfx* tabOutline;
     struct TabRenderData* tabRenderData;
 };
 
 void tabsInit(struct Tabs* tabs, struct Tab* tabList, int tabCount, struct Font* font, int x, int y, int width, int height);
 void tabsSetSelectedTab(struct Tabs* tabs, int index);
-Gfx* tabsRenderText(struct Tabs* tabs, Gfx* dl);
+void tabsRenderText(struct Tabs* tabs, struct PrerenderedTextBatch* batch);
+void tabsRebuildText(struct Tabs* tabs);
 
 #endif

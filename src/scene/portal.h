@@ -11,12 +11,11 @@
 #include "./portal_surface.h"
 #include "../physics/collision_object.h"
 
-#define STARTING_RENDER_DEPTH       2
+#define PORTAL_RENDER_DEPTH_MAX  8
 #define PORTAL_LOOP_SIZE    8
 
 enum PortalFlags {
     PortalFlagsOddParity = (1 << 0),
-    PortalFlagsNeedsNewHole = (1 << 1),
     PortalFlagsPlayerPortal = (1 << 2),
 };
 
@@ -34,10 +33,8 @@ struct Portal {
     // used to attach portals to moving surfaces
     short transformIndex;
     struct Vector3 relativePos;
+    struct Quaternion relativeRotation;
 };
-
-#define PORTAL_COVER_HEIGHT 0.708084f
-#define PORTAL_COVER_WIDTH  0.84085f
 
 #define NO_PORTAL 0xFF
 
@@ -56,7 +53,7 @@ extern struct Vector3 gPortalOutline[PORTAL_LOOP_SIZE];
 void portalInit(struct Portal* portal, enum PortalFlags flags);
 void portalUpdate(struct Portal* portal, int isOpen);
 
-void portalCalculateBB(struct Portal* portal, struct Box3D* bb);
+void portalCalculateBB(struct Transform* portalTransform, struct Box3D* bb);
 
 int portalAttachToSurface(struct Portal* portal, struct PortalSurface* surface, int surfaceIndex, struct Transform* portalAt, int just_checking);
 void portalCheckForHoles(struct Portal* portals);

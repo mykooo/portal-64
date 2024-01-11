@@ -4,22 +4,10 @@ local sk_scene = require('sk_scene')
 local room_export = require('tools.level_scripts.room_export')
 local signals = require('tools.level_scripts.signals')
 local animation = require('tools.level_scripts.animation')
+local yaml_loader = require('tools.level_scripts.yaml_loader')
+local util = require('tools.level_scripts.util')
 
 sk_definition_writer.add_header('"../build/src/audio/clips.h"')
-
-
-local function does_belong_to_cutscene(first_step, step)
-    local offset = step.position - first_step.position
-    local local_pos = first_step.rotation * offset
-
-    return local_pos.z >= 0 and local_pos.x * local_pos.x + local_pos.y * local_pos.y < 0.1
-end
-
-local function distance_from_start(first_step, step)
-    local offset = step.position - first_step.position
-    local local_pos = first_step.rotation * offset
-    return local_pos.z
-end
 
 local function cutscene_index(cutscenes, name)
     for _, cutscene in pairs(cutscenes) do
@@ -111,12 +99,13 @@ local function generate_cutscene_step(cutscene_name, step, step_index, label_loc
             tonumber(step.args[2] or "1") * 255,
             math.floor(tonumber(step.args[3] or "1") * 64 + 0.5),
         }
-    elseif step.command == "q_sound" and #step.args >= 2 then
+    elseif step.command == "q_sound" and #step.args >= 3 then
         result.type = sk_definition_writer.raw('CutsceneStepTypeQueueSound')
         result.queueSound = {
             sk_definition_writer.raw(string_starts_with(step.args[1], "SOUNDS_") and step.args[1] or ("SOUNDS_" .. step.args[1])),
             sk_definition_writer.raw(step.args[2]),
-            tonumber(step.args[3] or "1") * 255,
+            sk_definition_writer.raw(step.args[3]),
+            tonumber(step.args[4] or "1") * 255,
         }
     elseif step.command == "wait_for_channel" and #step.args >= 1 then
         result.type = sk_definition_writer.raw('CutsceneStepTypeWaitForChannel')
@@ -131,6 +120,7 @@ local function generate_cutscene_step(cutscene_name, step, step_index, label_loc
         result.openPortal = {
             find_location_index(step.args[1]),
             step.args[2] == "1" and 1 or 0,
+            step.args[3] == "pedestal" and 1 or 0
         }
     elseif step.command == "close_portal" and #step.args >= 1 then
         result.type = sk_definition_writer.raw('CutsceneStepTypeClosePortal')
@@ -237,6 +227,16 @@ local function generate_cutscene_step(cutscene_name, step, step_index, label_loc
         result.killPlayer = {
             step.args[1] == 'water' and 1 or 0,
         }
+    elseif step.command == "show_prompt" then
+        result.type = sk_definition_writer.raw('CutsceneStepShowPrompt')
+        result.showPrompt = {
+            sk_definition_writer.raw(step.args[1]),
+        }
+    elseif step.command == "rumble" then
+        result.type = sk_definition_writer.raw('CutsceneStepRumble')
+        result.rumble = {
+            tonumber(step.args[1]),
+        }
     else
         error("Unrecognized cutscene step " .. step.command)
         result.type = sk_definition_writer.raw('CutsceneStepTypeNoop')
@@ -247,55 +247,32 @@ local function generate_cutscene_step(cutscene_name, step, step_index, label_loc
 end
 
 local function generate_cutscenes()
-    local step_nodes = sk_scene.nodes_for_type("@cutscene")
-
-    local steps = {}
-    local cutscenes = {}
-
-    for _, node_info in pairs(step_nodes) do
-        if #node_info.arguments > 0 then
-            local command = node_info.arguments[1]
-            local args = {table.unpack(node_info.arguments, 2)}
-
-            local position, rotation, scale = node_info.node.transformation:decompose()
-
-            local step = {
-                command = command,
-                args = args,
-                position = position,
-                rotation = rotation:conjugate(),
-            }
-
-            if command == "start" and #args >= 1 then
-                table.insert(cutscenes, {
-                    name = args[1],
-                    steps = {step},
-                    macro = sk_definition_writer.raw(sk_definition_writer.add_macro("CUTSCENE_" .. args[1], #cutscenes)),
-                })
-            else
-                table.insert(steps, step)
-            end
-        end
-    end
-
-    for _, cutscene in pairs(cutscenes) do
-        for _, step in pairs(steps) do
-            if does_belong_to_cutscene(cutscene.steps[1], step) then
-                table.insert(cutscene.steps, step)
-            end
-        end
-    end
-
     local cutscenes_result = {}
     local cutscene_data = {}
 
-    for _, cutscene in pairs(cutscenes) do
-        local first_step = cutscene.steps[1]
-        local other_steps = {table.unpack(cutscene.steps, 2)}
+    local cutscene_json = yaml_loader.json_contents.cutscenes or {}
 
-        table.sort(other_steps, function(a, b)
-            return distance_from_start(first_step, a) < distance_from_start(first_step, b)
-        end)
+    local cutscenes = {}
+
+    for cutscene_name, cutscene_steps in pairs(cutscene_json) do
+        table.insert(cutscenes, {
+            name = cutscene_name,
+            steps = cutscene_steps,
+            macro = sk_definition_writer.raw(sk_definition_writer.add_macro("CUTSCENE_" .. cutscene_name, #cutscenes)),
+        })
+    end
+
+    for _, cutscene in pairs(cutscenes) do
+        local other_steps = {}
+
+        for _, step_string in pairs(cutscene.steps) do
+            local args = util.string_split(step_string, ' ')
+
+            table.insert(other_steps, {
+                command = args[1],
+                args = {table.unpack(args, 2)},
+            })
+        end
 
         local label_locations = find_label_locations(other_steps)
 
@@ -310,16 +287,36 @@ local function generate_cutscenes()
         table.insert(cutscenes_result, {
             name = cutscene.name,
             steps = steps,
-            macro = cutscene.macro,
+            macro = sk_definition_writer.raw(sk_definition_writer.add_macro("CUTSCENE_" .. cutscene.name, #cutscenes_result)),
         })
 
         table.insert(cutscene_data, {
             sk_definition_writer.reference_to(steps, 1),
-            #cutscene.steps - 1,
+            #steps,
         })
     end
 
     return cutscenes_result, cutscene_data
+end
+
+local function parse_trigger_signal(signal)
+    if not signal or signal == '-1' then
+        return -1
+    end
+
+    return signals.signal_index_for_name(signal)
+end
+
+local function signal_type_index(index, is_hover)
+    if index == 3 then
+        if is_hover then
+            return sk_definition_writer.raw('ObjectTriggerTypeCubeHover')
+        end
+
+        return sk_definition_writer.raw('ObjectTriggerTypeCube')
+    end
+
+    return sk_definition_writer.raw('ObjectTriggerTypePlayer')
 end
 
 local function generate_triggers(cutscenes)
@@ -327,16 +324,30 @@ local function generate_triggers(cutscenes)
     
     for _, trigger in pairs(sk_scene.nodes_for_type('@trigger')) do
         local first_mesh = trigger.node.meshes[1]
-        local cutscene_index = cutscene_index(cutscenes, trigger.arguments[1])
+        
+        local triggers = {}
+        
+        for i = 1, #trigger.arguments, 2 do
+            local cutscene_name = trigger.arguments[i]
+            local cutscene = cutscene_index(cutscenes, cutscene_name)
+            table.insert(triggers, {
+                signal_type_index(i, string.sub(cutscene_name, 1, 6) == "HOVER_"),
+                cutscene,
+                parse_trigger_signal(trigger.arguments[i + 1]),
+            })
+        end
+
     
         if first_mesh then
             local transformed = first_mesh:transform(trigger.node.full_transformation)
     
             table.insert(result, {
                 transformed.bb,
-                cutscene_index,
-                trigger.arguments[2] and signals.signal_index_for_name(trigger.arguments[2]) or -1,
+                sk_definition_writer.reference_to(triggers, 1),
+                #triggers,
             })
+
+            sk_definition_writer.add_definition("trigger_targets", "struct ObjectTriggerInfo[]", "_geo", triggers)
         end
     end
 

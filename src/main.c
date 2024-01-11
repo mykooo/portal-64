@@ -1,29 +1,33 @@
-
 #include <ultra64.h>
 #include <sched.h>
 
+#include "audio/audio.h"
+#include "audio/soundplayer.h"
+#include "controls/controller_actions.h"
+#include "controls/controller.h"
+#include "controls/rumble_pak.h"
 #include "defs.h"
 #include "graphics/graphics.h"
-#include "util/rom.h"
-#include "scene/scene.h"
-#include "menu/main_menu.h"
-#include "util/time.h"
-#include "util/memory.h"
-#include "string.h"
-#include "controls/controller.h"
-#include "controls/controller_actions.h"
-#include "scene/dynamic_scene.h"
-#include "audio/soundplayer.h"
-#include "audio/audio.h"
-#include "scene/portal_surface.h"
-#include "sk64/skelatool_defs.h"
 #include "levels/cutscene_runner.h"
+#include "levels/intro.h"
+#include "menu/main_menu.h"
+#include "menu/translations.h"
 #include "savefile/savefile.h"
+#include "scene/dynamic_scene.h"
+#include "scene/portal_surface.h"
+#include "scene/scene.h"
 #include "sk64/skelatool_animator.h"
+#include "sk64/skelatool_defs.h"
+#include "string.h"
 #include "util/dynamic_asset_loader.h"
+#include "util/memory.h"
+#include "util/profile.h"
+#include "util/rom.h"
+#include "util/time.h"
 
 #include "levels/levels.h"
 #include "savefile/checkpoint.h"
+#include "main.h"
 
 #ifdef PORTAL64_WITH_DEBUGGER
 #include "../debugger/debugger.h"
@@ -50,7 +54,7 @@ static OSScClient       gfxClient;
 OSSched scheduler;
 u64            scheduleStack[OS_SC_STACKSIZE/8];
 OSMesgQueue	*schedulerCommandQueue;
-
+u8  schedulerMode;
 OSPiHandle	*gPiHandle;
 
 void boot(void *arg) {
@@ -95,6 +99,7 @@ static void initProc(void* arg) {
 
 struct Scene gScene;
 struct GameMenu gGameMenu;
+struct Intro gIntro;
 
 extern OSMesgQueue dmaMessageQ;
 
@@ -126,10 +131,19 @@ struct SceneCallbacks gMainMenuCallbacks = {
     .updateCallback = (UpdateCallback)&mainMenuUpdate,
 };
 
+struct SceneCallbacks gIntroCallbacks = {
+    .data = &gIntro,
+    .initCallback = (InitCallback)&introInit,
+    .graphicsCallback = (GraphicsCallback)&introRender,
+    .updateCallback = (UpdateCallback)&introUpdate,
+};
+
 struct SceneCallbacks* gSceneCallbacks = &gTestChamberCallbacks;
 
 void levelLoadWithCallbacks(int levelIndex) {
-    if (levelIndex == MAIN_MENU) {
+    if (levelIndex == INTRO_MENU) {
+        gSceneCallbacks = &gIntroCallbacks;
+    } else if (levelIndex == MAIN_MENU) {
         levelLoad(0);
         gSceneCallbacks = &gMainMenuCallbacks;
     } else {
@@ -138,23 +152,41 @@ void levelLoadWithCallbacks(int levelIndex) {
     }
 }
 
-static void gameProc(void* arg) {
-    u8 schedulerMode = OS_VI_NTSC_LPF1;
-
+int updateSchedulerModeAndGetFPS(int interlacedMode) {
     int fps = 60;
+    
+    schedulerMode = interlacedMode ? OS_VI_NTSC_LPF1 : OS_VI_NTSC_LPN1;
+    
+    switch (osTvType) {
+	case 0: // PAL
+		schedulerMode = HIGH_RES ? (interlacedMode ? OS_VI_PAL_HPF1 : OS_VI_PAL_HPN1) : (interlacedMode ? OS_VI_PAL_LPF1 : OS_VI_PAL_LPN1);
+		fps = 50;
+		break;
+	case 1: // NTSC
+		schedulerMode = HIGH_RES ? (interlacedMode ? OS_VI_NTSC_HPF1 : OS_VI_NTSC_HPN1) : (interlacedMode ? OS_VI_NTSC_LPF1 : OS_VI_NTSC_LPN1);
+		break;
+	case 2: // MPAL
+		schedulerMode = HIGH_RES ? (interlacedMode ? OS_VI_MPAL_HPF1 : OS_VI_MPAL_HPN1) : (interlacedMode ? OS_VI_MPAL_LPF1 : OS_VI_MPAL_LPN1);
+		break;
+    }
+    return fps;
+}
 
-	switch (osTvType) {
-		case 0: // PAL
-			schedulerMode = HIGH_RES ? OS_VI_PAL_HPF1 : OS_VI_PAL_LPF1;
-            fps = 50;
-			break;
-		case 1: // NTSC
-			schedulerMode = HIGH_RES ? OS_VI_NTSC_HPF1 : OS_VI_NTSC_LPF1;
-			break;
-		case 2: // MPAL
-            schedulerMode = HIGH_RES ? OS_VI_MPAL_HPF1 : OS_VI_MPAL_LPF1;
-			break;
-	}
+int setViMode(int interlacedMode) {
+    int fps = updateSchedulerModeAndGetFPS(interlacedMode);
+    
+    osViSetMode(&osViModeTable[schedulerMode]);
+    
+    osViSetSpecialFeatures(OS_VI_GAMMA_OFF |
+		OS_VI_GAMMA_DITHER_OFF |
+		OS_VI_DIVOT_OFF |
+		OS_VI_DITHER_FILTER_OFF);
+
+    return fps;
+}
+
+static void gameProc(void* arg) {
+    int fps = updateSchedulerModeAndGetFPS(1);
 
     osCreateScheduler(
         &scheduler,
@@ -164,16 +196,15 @@ static void gameProc(void* arg) {
         1
     );
 
+    osViSetSpecialFeatures(OS_VI_GAMMA_OFF |
+		OS_VI_GAMMA_DITHER_OFF |
+		OS_VI_DIVOT_OFF |
+		OS_VI_DITHER_FILTER_OFF);
+
     schedulerCommandQueue = osScGetCmdQ(&scheduler);
 
     osCreateMesgQueue(&gfxFrameMsgQ, gfxFrameMsgBuf, MAX_FRAME_BUFFER_MESGS);
     osScAddClient(&scheduler, &gfxClient, &gfxFrameMsgQ);
-
-	osViSetSpecialFeatures(OS_VI_GAMMA_OFF |
-			OS_VI_GAMMA_DITHER_OFF |
-			OS_VI_DIVOT_OFF |
-			OS_VI_DITHER_FILTER_OFF);
-
     osViBlack(1);
 
     u32 pendingGFX = 0;
@@ -200,15 +231,21 @@ static void gameProc(void* arg) {
     dynamicSceneInit();
     contactSolverInit(&gContactSolver);
     portalSurfaceCleanupQueueInit();
+    
     savefileLoad();
-    levelLoadWithCallbacks(MAIN_MENU);
+    
+    levelLoadWithCallbacks(INTRO_MENU);
     gCurrentTestSubject = 0;
     cutsceneRunnerReset();
     controllersInit();
+    rumblePakClipInit();
     initAudio(fps);
     soundPlayerInit();
+    translationsLoad(gSaveData.controls.subtitleLanguage);
     skSetSegmentLocation(CHARACTER_ANIMATION_SEGMENT, (unsigned)_animation_segmentSegmentRomStart);
     gSceneCallbacks->initCallback(gSceneCallbacks->data);
+    // this prevents the intro from crashing
+    gGameMenu.currentRenderedLanguage = gSaveData.controls.subtitleLanguage;
 
     while (1) {
         OSScMsg *msg = NULL;
@@ -231,17 +268,33 @@ static void gameProc(void* arg) {
                         portalSurfaceRevert(0);
                         portalSurfaceCleanupQueueInit();
                         heapInit(_heapStart, memoryEnd);
+                        translationsLoad(gSaveData.controls.subtitleLanguage);
                         levelLoadWithCallbacks(levelGetQueued());
+                        rumblePakClipInit();
                         cutsceneRunnerReset();
                         dynamicAssetsReset();
+                        menuResetDeferredQueue();
+                        // if a portal fire button is being held
+                        // don't fire portals until it is released
+                        controllerActionMuteActive();
                         gSceneCallbacks->initCallback(gSceneCallbacks->data);
                     }
 
                     break;
                 }
 
+                if (translationsCurrentLanguage() != gGameMenu.currentRenderedLanguage) {
+                    if (pendingGFX == 0) {
+                        gameMenuRebuildText(&gGameMenu);
+                    }
+
+                    break;
+                }
+
                 if (pendingGFX < 2 && drawingEnabled) {
+                    u64 renderStart = profileStart();
                     graphicsCreateTask(&gGraphicsTasks[drawBufferIndex], gSceneCallbacks->graphicsCallback, gSceneCallbacks->data);
+                    profileEnd(renderStart, 1);
                     drawBufferIndex = drawBufferIndex ^ 1;
                     ++pendingGFX;
                 }
@@ -254,18 +307,23 @@ static void gameProc(void* arg) {
                 if (inputIgnore) {
                     --inputIgnore;
                 } else {
+                    u64 updateStart = profileStart();
                     gSceneCallbacks->updateCallback(gSceneCallbacks->data);
+                    profileEnd(updateStart, 0);
                     drawingEnabled = 1;
                 }
                 timeUpdateDelta();
                 soundPlayerUpdate();
                 controllersSavePreviousState();
 
+                profileReport();
+
                 break;
 
             case (OS_SC_DONE_MSG):
                 --pendingGFX;
                 portalSurfaceCheckCleanupQueue();
+                menuTickDeferredQueue();
 
                 if (gScene.checkpointState == SceneCheckpointStatePendingRender) {
                     gScene.checkpointState = SceneCheckpointStateReady;
@@ -273,9 +331,6 @@ static void gameProc(void* arg) {
                 break;
             case (OS_SC_PRE_NMI_MSG):
                 pendingGFX += 2;
-                break;
-            case SIMPLE_CONTROLLER_MSG:
-                controllersReadPendingData();
                 break;
         }
     }

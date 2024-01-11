@@ -121,7 +121,6 @@ enum FizzleCheckResult decorObjectUpdateFizzler(struct CollisionObject* collisio
     enum FizzleCheckResult result = FizzleCheckResultNone;
 
     if (collisionObject->body && collisionObject->body->flags & RigidBodyFizzled) {
-
         if (*fizzleTime == 0.0f) {
             vector3Scale(&collisionObject->body->velocity, &collisionObject->body->velocity, 0.25f);
 
@@ -133,6 +132,8 @@ enum FizzleCheckResult decorObjectUpdateFizzler(struct CollisionObject* collisio
             vector3AddScaled(&collisionObject->body->angularVelocity, &randomAngularVelocity, 0.3f, &collisionObject->body->angularVelocity);
 
             result = FizzleCheckResultStart;
+
+            collisionObject->collisionLayers = 0;
         }
 
         *fizzleTime += FIZZLE_TIME_STEP;
@@ -148,6 +149,10 @@ enum FizzleCheckResult decorObjectUpdateFizzler(struct CollisionObject* collisio
 }
 
 int decorObjectUpdate(struct DecorObject* decorObject) {
+    if (decorObject->collisionObject.flags & COLLISION_OBJECT_PLAYER_STANDING) {
+        decorObject->collisionObject.flags &= ~COLLISION_OBJECT_PLAYER_STANDING;
+    }
+
     if (decorObject->playingSound != SOUND_ID_NONE) {
         soundPlayerUpdatePosition(
             decorObject->playingSound, 
@@ -164,7 +169,7 @@ int decorObjectUpdate(struct DecorObject* decorObject) {
             decorObject->playingSound = SOUND_ID_NONE;
             
             if (decorObject->definition->soundFizzleId != SOUND_ID_NONE) {
-                decorObject->playingSound = soundPlayerPlay(decorObject->definition->soundFizzleId, 2.0f, 0.5f, &decorObject->rigidBody.transform.position, &decorObject->rigidBody.velocity);
+                decorObject->playingSound = soundPlayerPlay(decorObject->definition->soundFizzleId, 2.0f, 0.5f, &decorObject->rigidBody.transform.position, &decorObject->rigidBody.velocity, SoundTypeAll);
             }
         }
     } else if (fizzleResult == FizzleCheckResultEnd) {
@@ -181,8 +186,8 @@ int decorObjectUpdate(struct DecorObject* decorObject) {
         return 0;
     }
 
-    if (decorObject->definition->soundClipId != -1 && decorObject->playingSound == SOUND_ID_NONE && decorObject->fizzleTime == 0.0f) {
-        decorObject->playingSound = soundPlayerPlay(decorObject->definition->soundClipId, 1.0f, 1.0f, &decorObject->rigidBody.transform.position, &decorObject->rigidBody.velocity);
+    if (decorObject->definition->soundClipId != -1 && decorObject->playingSound == SOUND_ID_NONE && decorObject->fizzleTime == 0.0f && !(decorObject->definition->flags & DecorObjectFlagsMuted)) {
+        decorObject->playingSound = soundPlayerPlay(decorObject->definition->soundClipId, 1.0f, 1.0f, &decorObject->rigidBody.transform.position, &decorObject->rigidBody.velocity, SoundTypeAll);
     }
 
     dynamicSceneSetRoomFlags(decorObject->dynamicId, ROOM_FLAG_FROM_INDEX(decorObject->rigidBody.currentRoom));

@@ -45,7 +45,8 @@ struct LevelDefinition* levelFixPointers(struct LevelDefinition* from, int point
 
     result->staticContent = ADJUST_POINTER_POS(result->staticContent, pointerOffset);
     result->roomStaticMapping = ADJUST_POINTER_POS(result->roomStaticMapping, pointerOffset);
-    result->staticBoundingBoxes = ADJUST_POINTER_POS(result->staticBoundingBoxes, pointerOffset);
+    result->signalToStaticRanges = ADJUST_POINTER_POS(result->signalToStaticRanges, pointerOffset);
+    result->signalToStaticIndices = ADJUST_POINTER_POS(result->signalToStaticIndices, pointerOffset);
     result->portalSurfaces = ADJUST_POINTER_POS(result->portalSurfaces, pointerOffset);
 
     for (int i = 0; i < result->portalSurfaceCount; ++i) {
@@ -58,6 +59,11 @@ struct LevelDefinition* levelFixPointers(struct LevelDefinition* from, int point
     result->portalSurfaceDynamicMappingRange = ADJUST_POINTER_POS(result->portalSurfaceDynamicMappingRange, pointerOffset);
     result->portalSurfaceMappingIndices = ADJUST_POINTER_POS(result->portalSurfaceMappingIndices, pointerOffset);
     result->triggers = ADJUST_POINTER_POS(result->triggers, pointerOffset);
+
+    for (int i = 0; i < result->triggerCount; ++i) {
+        result->triggers[i].triggers = ADJUST_POINTER_POS(result->triggers[i].triggers, pointerOffset);
+    }
+    
     result->cutscenes = ADJUST_POINTER_POS(result->cutscenes, pointerOffset);
 
     for (int i = 0; i < result->cutsceneCount; ++i) {
@@ -65,6 +71,7 @@ struct LevelDefinition* levelFixPointers(struct LevelDefinition* from, int point
     }
 
     result->locations = ADJUST_POINTER_POS(result->locations, pointerOffset);
+    result->roomBvhList = ADJUST_POINTER_POS(result->roomBvhList, pointerOffset);
     result->world.rooms = ADJUST_POINTER_POS(result->world.rooms, pointerOffset);
     result->world.doorways = ADJUST_POINTER_POS(result->world.doorways, pointerOffset);
 
@@ -72,6 +79,9 @@ struct LevelDefinition* levelFixPointers(struct LevelDefinition* from, int point
         result->world.rooms[i].quadIndices = ADJUST_POINTER_POS(result->world.rooms[i].quadIndices, pointerOffset);
         result->world.rooms[i].cellContents = ADJUST_POINTER_POS(result->world.rooms[i].cellContents, pointerOffset);
         result->world.rooms[i].doorwayIndices = ADJUST_POINTER_POS(result->world.rooms[i].doorwayIndices, pointerOffset);
+
+        result->roomBvhList[i].boxIndex = ADJUST_POINTER_POS(result->roomBvhList[i].boxIndex, pointerOffset);
+        result->roomBvhList[i].animatedBoxes = ADJUST_POINTER_POS(result->roomBvhList[i].animatedBoxes, pointerOffset);
     }
 
     result->doors = ADJUST_POINTER_POS(result->doors, pointerOffset);
@@ -118,6 +128,7 @@ void levelLoad(int index) {
     gQueuedLevel = NO_QUEUED_LEVEL;
 
     collisionSceneInit(&gCollisionScene, gCurrentLevel->collisionQuads, gCurrentLevel->collisionQuadCount, &gCurrentLevel->world);
+    soundPlayerResume();
 }
 
 void levelQueueLoad(int index, struct Transform* relativeExitTransform, struct Vector3* relativeVelocity) {
@@ -241,6 +252,34 @@ int levelGetChamberNumber(int levelIndex, int roomIndex){
                 return 11;
             else
                 return 12;
+        default:
+            return 0;
+    }
+}
+
+int chamberNumberGetLevel(int chamberIndex) {
+    switch (chamberIndex) {
+        case 0:
+        case 1:
+            return 0;
+        case 2:
+        case 3:
+            return 1;
+        case 4:
+        case 5:
+            return 2;
+        case 6:
+        case 7:
+            return 3;
+        case 8:
+            return 4;
+        case 9:
+            return 5;
+        case 10:
+            return 6;
+        case 11:
+        case 12:
+            return 7;
         default:
             return 0;
     }

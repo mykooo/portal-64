@@ -14,12 +14,10 @@
 #define NO_EDGE_CONNECTION      0xFF
 
 struct SurfaceEdge {
-    u8 aIndex;
-    u8 bIndex;
+    u8 pointIndex;
     u8 nextEdge;
     u8 prevEdge;
-    u8 nextEdgeReverse;
-    u8 prevEdgeReverse;
+    u8 reverseEdge;
 };
 
 struct PortalSurface {
@@ -53,12 +51,11 @@ struct PortalSurfaceReplacement {
     short staticIndex;
     short portalSurfaceIndex;
     short roomIndex;
+    float portalScale;
 };
 
 void portalSurfaceCleanupQueueInit();
 
-int portalSurfaceAreBothOnSameSurface();
-int portalSurfaceShouldSwapOrder(int portalToMove);
 void portalSurfacePreSwap(int portalToMove);
 int portalSurfaceStaticIndexForReplacement(int portalIndex);
 
@@ -73,9 +70,11 @@ int portalSurfaceAdjustPosition(struct PortalSurface* surface, struct Transform*
 struct PortalSurface* portalSurfaceGetOriginalSurface(int portalSurfaceIndex, int portalIndex);
 void portalSurfaceInverse(struct PortalSurface* surface, struct Vector2s16* input, struct Vector3* output);
 
-struct PortalSurface* portalSurfaceReplace(int portalSurfaceIndex, int roomIndex, int portalIndex, struct PortalSurface* with);
+struct PortalSurface* portalSurfaceReplace(int portalSurfaceIndex, int roomIndex, int portalIndex, float portalScale, struct PortalSurface* with);
 void portalSurfaceRevert(int portalIndex);
 void portalSurfaceCheckCleanupQueue();
+int portalSurfaceGetSurfaceIndex(int portalIndex);
+int portalSurfaceShouldMove(int portalIndex, int portalSurfaceIndex, float portalScale);
 
 
 #endif

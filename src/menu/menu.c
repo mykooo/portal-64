@@ -7,6 +7,15 @@ struct Coloru8 gSelectionGray = {201, 201, 201, 255};
 struct Coloru8 gBorderHighlight = {193, 193, 193, 255};
 struct Coloru8 gBorderDark = {86, 86, 86, 255};
 
+struct PrerenderedText* menuBuildPrerenderedText(struct Font* font, char* message, int x, int y, int maxWidth) {
+    struct FontRenderer* renderer = stackMalloc(sizeof(struct FontRenderer));
+    fontRendererLayout(renderer, font, message, maxWidth);
+    struct PrerenderedText* result = prerenderedTextNew(renderer);
+    fontRendererFillPrerender(renderer, result, x, y, NULL);
+    stackMallocFree(renderer);
+    return result;
+}
+
 Gfx* menuBuildText(struct Font* font, char* message, int x, int y) {
     Gfx* result = malloc(sizeof(Gfx) * (fontCountGfx(font, message) + 1));
     Gfx* dl = result;
@@ -149,10 +158,23 @@ Gfx* menuBuildOutline(int x, int y, int width, int height, int invert) {
     return result;
 }
 
-struct MenuButton menuBuildButton(struct Font* font, char* message, int x, int y, int width, int height) {
+#define BUTTON_LEFT_PADDING 4
+#define BUTTON_RIGHT_PADDING 9
+
+#define BUTTON_TOP_PADDING 2
+
+struct MenuButton menuBuildButton(struct Font* font, char* message, int x, int y, int height, int rightAlign) {
     struct MenuButton result;
 
-    result.text = menuBuildText(font, message, x + 4, y + 2);
+    result.text = menuBuildPrerenderedText(font, message, x + BUTTON_LEFT_PADDING, y + BUTTON_TOP_PADDING, SCREEN_HT);
+
+    int width = result.text->width + BUTTON_LEFT_PADDING + BUTTON_RIGHT_PADDING;
+
+    if (rightAlign) {
+        x -= width;
+        prerenderedTextRelocate(result.text, x + BUTTON_LEFT_PADDING, y + BUTTON_TOP_PADDING);
+    }
+
     result.outline = menuBuildOutline(x, y, width, height, 0);
 
     result.x = x;
@@ -164,6 +186,23 @@ struct MenuButton menuBuildButton(struct Font* font, char* message, int x, int y
     return result;
 }
 
+void menuRebuildButtonText(struct MenuButton* button, struct Font* font, char* message, int rightAlign) {
+    menuFreePrerenderedDeferred(button->text);
+
+    button->text = menuBuildPrerenderedText(font, message, button->x + BUTTON_LEFT_PADDING, button->y + BUTTON_TOP_PADDING, SCREEN_HT);
+
+    int newWidth = button->text->width + BUTTON_LEFT_PADDING + BUTTON_RIGHT_PADDING;
+
+    if (rightAlign) {
+        button->x -= newWidth - button->w;
+        prerenderedTextRelocate(button->text, button->x + BUTTON_LEFT_PADDING, button->y + BUTTON_TOP_PADDING);
+    }
+
+    button->w = newWidth;
+
+    menuRenderOutline(button->x, button->y, button->w, button->h, 0, button->outline);
+}
+
 void menuSetRenderColor(struct RenderState* renderState, int isSelected, struct Coloru8* selected, struct Coloru8* defaultColor) {
     if (isSelected) {
         gDPSetEnvColor(renderState->dl++, selected->r, selected->g, selected->b, selected->a);
@@ -172,9 +211,7 @@ void menuSetRenderColor(struct RenderState* renderState, int isSelected, struct 
     }
 }
 
-#define CHECKBOX_SIZE   12
-
-struct MenuCheckbox menuBuildCheckbox(struct Font* font, char* message, int x, int y) {
+struct MenuCheckbox menuBuildCheckbox(struct Font* font, char* message, int x, int y, int shouldUsePrerendered) {
     struct MenuCheckbox result;
 
     result.x = x;
@@ -190,7 +227,11 @@ struct MenuCheckbox menuBuildCheckbox(struct Font* font, char* message, int x, i
     dl = menuRenderOutline(x, y, CHECKBOX_SIZE, CHECKBOX_SIZE, 1, dl);
     gSPEndDisplayList(dl++);
 
-    result.text = menuBuildText(font, message, x + CHECKBOX_SIZE + 6, y);
+    if (shouldUsePrerendered) {
+        result.prerenderedText = menuBuildPrerenderedText(font, message, x + CHECKBOX_SIZE + 6, y, SCREEN_WD);
+    } else {
+        result.text = menuBuildText(font, message, x + CHECKBOX_SIZE + 6, y);
+    }
 
     result.checked = 0;
 
@@ -248,7 +289,7 @@ struct MenuSlider menuBuildSlider(int x, int y, int w, int tickCount) {
     int tickMin = x + (SLIDER_WIDTH / 2);
     int tickWidth = w - SLIDER_WIDTH;
     for (int i = 0; i < tickCount; ++i) {
-        int tickX = (i * tickWidth) / (tickCount - 1) + tickMin;
+        int tickX = tickCount <= 1 ? tickMin : (i * tickWidth) / (tickCount - 1) + tickMin;
         gDPFillRectangle(
             dl++, 
             tickX, 
@@ -283,4 +324,63 @@ Gfx* menuSliderRender(struct MenuSlider* slider, Gfx* dl) {
     dl = menuRenderOutline(sliderPos - (SLIDER_WIDTH / 2), slider->y, SLIDER_WIDTH, SLIDER_HEIGHT, 0, dl);
 
     return dl;
+}
+
+#define MAX_DEFERRED_RELEASE_SIZE   20
+#define RELEASE_DEFER_COUNT         2
+#define NEXT_ENTRY(curr)        ((curr) + 1 == MAX_DEFERRED_RELEASE_SIZE ? 0 : (curr) + 1)
+
+struct PrerenderedTextReleaseQueue {
+    struct PrerenderedText* queue[MAX_DEFERRED_RELEASE_SIZE];
+    u8 entryDelay[MAX_DEFERRED_RELEASE_SIZE];
+    short insertPos;
+    short readPos;
+};
+
+struct PrerenderedTextReleaseQueue gDeferredPTRelease;
+
+void menuFreePrerenderedDeferred(struct PrerenderedText* text) {
+    if (!text) {
+        return;
+    }
+
+    if (gDeferredPTRelease.insertPos == gDeferredPTRelease.readPos && gDeferredPTRelease.entryDelay[gDeferredPTRelease.readPos] != 0) {
+        // queue full, we just leak memory now
+        return;
+    }
+
+    gDeferredPTRelease.queue[gDeferredPTRelease.insertPos] = text;
+    gDeferredPTRelease.entryDelay[gDeferredPTRelease.insertPos] = RELEASE_DEFER_COUNT;
+    gDeferredPTRelease.insertPos = NEXT_ENTRY(gDeferredPTRelease.insertPos);
+}
+
+void menuTickDeferredQueue() {
+    int curr = gDeferredPTRelease.readPos;
+
+    if (gDeferredPTRelease.entryDelay[curr] == 0) {
+        return;
+    }
+
+    do {
+        --gDeferredPTRelease.entryDelay[curr];
+
+        int next = NEXT_ENTRY(curr);
+
+        if (gDeferredPTRelease.entryDelay[curr] == 0) {
+            prerenderedTextFree(gDeferredPTRelease.queue[curr]);
+            gDeferredPTRelease.queue[curr] = NULL;
+            gDeferredPTRelease.readPos = next;
+        }
+
+        curr = next;
+    } while (curr != gDeferredPTRelease.insertPos);
+}
+
+void menuResetDeferredQueue() {
+    for (int i = 0; i < MAX_DEFERRED_RELEASE_SIZE; ++i) {
+        gDeferredPTRelease.queue[i] = NULL;
+        gDeferredPTRelease.entryDelay[i] = 0;
+    }
+    gDeferredPTRelease.insertPos = 0;
+    gDeferredPTRelease.readPos = 0;
 }

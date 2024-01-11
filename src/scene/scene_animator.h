@@ -8,11 +8,22 @@
 
 #include "../graphics/renderstate.h"
 
+enum SceneAnimatorStateFlags {
+    SceneAnimatorStateWasMoving = (1 << 0),
+};
+
+struct SceneAnimatorState {
+    float playbackSpeed;
+    ALSndId soundId;
+    short flags;
+    struct Vector3 lastPosition;
+};
+
 struct SceneAnimator {
     struct SKArmature* armatures;
     struct SKAnimator* animators;
     struct AnimationInfo* animationInfo;
-    float* playbackSpeeds;
+    struct SceneAnimatorState* state;
     short animatorCount;
     short boneCount;
 };

@@ -6,8 +6,22 @@
 #include "../levels/levels.h"
 #include "../util/memory.h"
 #include "../savefile/checkpoint.h"
+#include "../locales/locales.h"
+#include "../controls/rumble_pak.h"
 
 #include <math.h>
+
+unsigned char gPortalOpenRumbleData[] = {
+    0xFA, 0xA9,
+};
+
+struct RumblePakWave gPortalOpenRumbleWave = {
+    .samples = gPortalOpenRumbleData,
+    .sampleCount = 8,
+    .samplesPerTick = 1 << 5,
+};
+
+#define RUMBLE_PLAYER_DISTANCE  8.0f
 
 struct CutsceneRunner* gRunningCutscenes;
 struct CutsceneRunner* gUnusedRunners;
@@ -18,6 +32,7 @@ u64 gTriggeredCutscenes;
 struct QueuedSound {
     struct QueuedSound* next;
     u16 soundId;
+    u16 subtitleId;
     float volume;
 };
 
@@ -26,9 +41,15 @@ struct QueuedSound* gCutsceneNextFreeSound;
 
 struct QueuedSound* gCutsceneSoundQueues[CH_COUNT];
 ALSndId gCutsceneCurrentSound[CH_COUNT];
+u16 gCutsceneCurrentSoundId[CH_COUNT];
+u16 gCutsceneCurrentSubtitleId[CH_COUNT];
+float   gCutsceneCurrentVolume[CH_COUNT];
+
 
 float gCutsceneChannelPitch[CH_COUNT] = {
     [CH_GLADOS] = 0.5f,
+    [CH_MUSIC] = 0.5f,
+    [CH_AMBIENT] = 0.5f
 };
 
 void cutsceneRunnerCancel(struct CutsceneRunner* runner);
@@ -46,6 +67,9 @@ void cutsceneRunnerReset() {
     for (int i = 0; i < CH_COUNT; ++i) {
         gCutsceneSoundQueues[i] = NULL;
         gCutsceneCurrentSound[i] = SOUND_ID_NONE;
+        gCutsceneCurrentSoundId[i] = SOUND_ID_NONE;
+        gCutsceneCurrentSubtitleId[i] = SubtitleKeyNone;
+        gCutsceneCurrentVolume[i] = 0.0f;
     }
 
     struct CutsceneRunner* current = gRunningCutscenes;
@@ -94,7 +118,7 @@ void cutsceneRunnerCancel(struct CutsceneRunner* runner) {
     runner->currentCutscene = NULL;
 }
 
-void cutsceneQueueSound(int soundId, float volume, int channel) {
+void cutsceneQueueSound(int soundId, float volume, int channel, int subtitleId) {
     struct QueuedSound* next = gCutsceneNextFreeSound;
 
     if (!next) {
@@ -106,6 +130,7 @@ void cutsceneQueueSound(int soundId, float volume, int channel) {
     next->next = NULL;
     next->soundId = soundId;
     next->volume = volume;
+    next->subtitleId = subtitleId;
 
     struct QueuedSound* tail = gCutsceneSoundQueues[channel];
 
@@ -124,6 +149,38 @@ float cutsceneRunnerConvertPlaybackSpeed(s8 asInt) {
     return asInt * (1.0f / 127.0f);
 }
 
+unsigned char gCutsceneRumbleSoftData[] = {
+    0xAA, 0x90,
+};
+
+unsigned char gCutsceneRumbleMediumData[] = {
+    0xAA, 0xA9, 0x90,
+};
+
+unsigned char gCutsceneRumbleHardData[] = {
+    0xFF, 0xAA, 0xAA, 0x99
+};
+
+#define CUTSCENE_RUMBLE_CLIP_COUNT   3
+
+struct RumblePakWave gCutsceneRumbleWaves[CUTSCENE_RUMBLE_CLIP_COUNT] = {
+    {
+        .samples = gCutsceneRumbleSoftData,
+        .sampleCount = 6,
+        .samplesPerTick = 1 << 5,
+    },
+    {
+        .samples = gCutsceneRumbleMediumData,
+        .sampleCount = 10,
+        .samplesPerTick = 1 << 5,
+    },
+    {
+        .samples = gCutsceneRumbleHardData,
+        .sampleCount = 16,
+        .samplesPerTick = 1 << 5,
+    },
+};
+
 void cutsceneRunnerStartStep(struct CutsceneRunner* runner) {
     struct CutsceneStep* step = &runner->currentCutscene->steps[runner->currentStep];
     
@@ -135,12 +192,13 @@ void cutsceneRunnerStartStep(struct CutsceneRunner* runner) {
                 step->playSound.volume * (1.0f / 255.0f),
                 step->playSound.pitch * (1.0f / 64.0f),
                 NULL,
-                NULL
+                NULL,
+                SoundTypeAll
             );
             break;
         case CutsceneStepTypeQueueSound:
         {
-            cutsceneQueueSoundInChannel(step->queueSound.soundId, step->queueSound.volume * (1.0f / 255.0f), step->queueSound.channel);
+            cutsceneQueueSoundInChannel(step->queueSound.soundId, step->queueSound.volume * (1.0f / 255.0f), step->queueSound.channel, step->queueSound.subtitleId);
             break;
         }
         case CutsceneStepTypeDelay:
@@ -149,19 +207,36 @@ void cutsceneRunnerStartStep(struct CutsceneRunner* runner) {
         case CutsceneStepTypeOpenPortal:
         {
             struct Location* location = &gCurrentLevel->locations[step->openPortal.locationIndex];
-            struct Ray firingRay;
-            struct Vector3 transformUp;
-            firingRay.origin = location->transform.position;
-            quatMultVector(&location->transform.rotation, &gForward, &firingRay.dir);
-            quatMultVector(&location->transform.rotation, &gRight, &transformUp);
-            vector3Negate(&transformUp, &transformUp);
-            vector3AddScaled(&location->transform.position, &firingRay.dir, -0.1f, &firingRay.origin);
-            sceneFirePortal(&gScene, &firingRay, &transformUp, step->openPortal.portalIndex, location->roomIndex, 0, 0);
+
+            if (step->openPortal.fromPedestal && gCurrentLevel->pedestalCount) {
+                struct Vector3 fireFrom = gScene.pedestals[0].transform.position;
+                fireFrom.y += 0.75f;
+                portalGunFireWorld(&gScene.portalGun, step->openPortal.portalIndex, &fireFrom, &location->transform.position, gScene.pedestals[0].roomIndex);
+            } else {
+                struct Ray firingRay;
+                struct Vector3 transformUp;
+                firingRay.origin = location->transform.position;
+                quatMultVector(&location->transform.rotation, &gForward, &firingRay.dir);
+                quatMultVector(&location->transform.rotation, &gRight, &transformUp);
+                vector3Negate(&transformUp, &transformUp);
+                vector3AddScaled(&location->transform.position, &firingRay.dir, -0.1f, &firingRay.origin);
+                sceneFirePortal(&gScene, &firingRay, &transformUp, step->openPortal.portalIndex, location->roomIndex, 0, 0);
+
+                if (vector3DistSqrd(&location->transform.position, &gScene.player.lookTransform.position) < RUMBLE_PLAYER_DISTANCE * RUMBLE_PLAYER_DISTANCE) {
+                    gScene.player.shakeTimer = 0.5f;
+                    rumblePakClipPlay(&gPortalOpenRumbleWave);
+                }
+            }
             break;
         }
         case CutsceneStepTypeClosePortal:
         {
             sceneClosePortal(&gScene, step->closePortal.portalIndex);
+            break;
+        }
+        case CutsceneStepShowPrompt:
+        {
+            hudShowActionPrompt(&gScene.hud, step->showPrompt.actionPromptType);
             break;
         }
         case CutsceneStepTypeSetSignal:
@@ -239,6 +314,9 @@ void cutsceneRunnerStartStep(struct CutsceneRunner* runner) {
         case CutsceneStepKillPlayer:
             playerKill(&gScene.player, step->killPlayer.isWater);
             break;
+        case CutsceneStepRumble:
+            rumblePakClipPlay(&gCutsceneRumbleWaves[step->rumble.rumbleLevel]);
+            break;
         default:
     }
 }
@@ -251,7 +329,7 @@ int cutsceneRunnerUpdateCurrentStep(struct CutsceneRunner* runner) {
     struct CutsceneStep* step = &runner->currentCutscene->steps[runner->currentStep];
     switch (step->type) {
         case CutsceneStepTypePlaySound:
-            return !soundPlayerIsPlaying(runner->state.playSound.soundId);
+            return soundPlayerIsLoopedById(runner->state.playSound.soundId) || !soundPlayerIsPlaying(runner->state.playSound.soundId);
         case CutsceneStepTypeWaitForChannel:
         {
             int result = !cutsceneRunnerIsChannelPlaying(step->waitForChannel.channel);
@@ -385,21 +463,43 @@ float cutsceneSoundQueueTime(int channel) {
 
 void cutscenesUpdateSounds() {
     for (int i = 0; i < CH_COUNT; ++i) {
+        int soundType = SoundTypeNone;
+        int subtitleType = SubtitleTypeNone; 
+        if (i == CH_GLADOS){
+            soundType = SoundTypeAll;
+            subtitleType = SubtitleTypeCloseCaption; 
+        }else if (i == CH_MUSIC){
+            soundType = SoundTypeMusic;
+        }else if (i == CH_AMBIENT){
+            soundType = SoundTypeAll;
+        }
+
         if (!soundPlayerIsPlaying(gCutsceneCurrentSound[i])) {
             if (gCutsceneSoundQueues[i]) {
                 struct QueuedSound* curr = gCutsceneSoundQueues[i];
 
-                gCutsceneCurrentSound[i] = soundPlayerPlay(curr->soundId, curr->volume, gCutsceneChannelPitch[i], NULL, NULL);
+                gCutsceneCurrentSound[i] = soundPlayerPlay(curr->soundId, curr->volume, gCutsceneChannelPitch[i], NULL, NULL, soundType);
+                gCutsceneCurrentSoundId[i] = curr->soundId;
+                gCutsceneCurrentSubtitleId[i] = curr->subtitleId;
+                gCutsceneCurrentVolume[i] = curr->volume;
+                if (curr->subtitleId != SubtitleKeyNone){
+                    hudShowSubtitle(&gScene.hud, curr->subtitleId, subtitleType);
+                }
+
                 gCutsceneSoundQueues[i] = curr->next;
 
                 curr->next = gCutsceneNextFreeSound;
                 gCutsceneNextFreeSound = curr;
             } else {
-                if (gCutsceneCurrentSound[i] != SOUND_ID_NONE) {
-                    soundPlayerPlay(soundsIntercom[1], 1.0f, gCutsceneChannelPitch[i], NULL, NULL);
+                if (gCutsceneCurrentSound[i] != SOUND_ID_NONE && i == CH_GLADOS) {
+                    soundPlayerPlay(soundsIntercom[1], 1.0f, gCutsceneChannelPitch[i], NULL, NULL, soundType);
+                    hudResolveSubtitle(&gScene.hud);
                 }
 
                 gCutsceneCurrentSound[i] = SOUND_ID_NONE;
+                gCutsceneCurrentSoundId[i] = SOUND_ID_NONE;
+                gCutsceneCurrentSubtitleId[i] = SubtitleKeyNone;
+                gCutsceneCurrentVolume[i] = 0.0f;
             }
         }
     }
@@ -457,22 +557,18 @@ float cutsceneEstimateTimeLeft(struct Cutscene* cutscene) {
     return 0.0f;
 }
 
-void cutsceneCheckTriggers(struct Vector3* playerPos) {
-    for (int i = 0; i < gCurrentLevel->triggerCount; ++i) {
-        struct Trigger* trigger = &gCurrentLevel->triggers[i];
-        u64 cutsceneMask = 1LL << i;
-        if (box3DContainsPoint(&trigger->box, playerPos)) {
-            if (trigger->signalIndex != -1) {
-                signalsSend(trigger->signalIndex);
-            }
+int cutsceneTrigger(int cutsceneIndex, int triggerIndex) {
+    u64 cutsceneMask = 1LL << triggerIndex;
 
-            if (trigger->cutsceneIndex != -1 && !(gTriggeredCutscenes & cutsceneMask)) {
-                cutsceneStart(&gCurrentLevel->cutscenes[trigger->cutsceneIndex]);
-                // prevent the trigger from happening again
-                gTriggeredCutscenes |= cutsceneMask;
-            }
-        }
+    if (cutsceneIndex != -1 && !(gTriggeredCutscenes & cutsceneMask)) {
+        cutsceneStart(&gCurrentLevel->cutscenes[cutsceneIndex]);
+        // prevent the trigger from happening again
+        gTriggeredCutscenes |= cutsceneMask;
+
+        return 1;
     }
+
+    return (gTriggeredCutscenes & cutsceneMask) != 0;
 }
 
 void cutsceneSerialize(struct CutsceneRunner* runner, struct CutsceneSerialized* result) {
@@ -531,10 +627,25 @@ void cutsceneSerializeWrite(struct Serializer* serializer, SerializeAction actio
     action(serializer, &gTriggeredCutscenes, sizeof(gTriggeredCutscenes));
 
     for (int i = 0; i < CH_COUNT; ++i) {
+        s16 curr = gCutsceneCurrentSound[i];
+        action(serializer, &curr, sizeof(curr));
+
+        u16 currId = gCutsceneCurrentSoundId[i];
+        action(serializer, &currId, sizeof(currId));
+
+        u16 subtitleId = gCutsceneCurrentSubtitleId[i];
+        action(serializer, &subtitleId, sizeof(subtitleId));
+
+        u8 volume = (u8)(clampf(gCutsceneCurrentVolume[i], 0.0f, 1.0f) * 255.0f);
+        action(serializer, &volume, sizeof(volume));
+    }
+
+    for (int i = 0; i < CH_COUNT; ++i) {
         struct QueuedSound* curr = gCutsceneSoundQueues[i];
 
         while (curr) {
             action(serializer, &curr->soundId, sizeof(u16));
+            action(serializer, &curr->subtitleId, sizeof(s16));
             u8 volume = (u8)(clampf(curr->volume, 0.0f, 1.0f) * 255.0f);
             action(serializer, &volume, sizeof(volume));
             curr = curr->next;
@@ -560,22 +671,59 @@ void cutsceneSerializeRead(struct Serializer* serializer) {
     serializeRead(serializer, &gTriggeredCutscenes, sizeof (gTriggeredCutscenes));
 
     for (int i = 0; i < CH_COUNT; ++i) {
+        s16 curr;
+        serializeRead(serializer, &curr, sizeof(curr));
+        gCutsceneCurrentSound[i] = curr;
+
+        u16 currId;
+        serializeRead(serializer, &currId, sizeof(currId));
+        gCutsceneCurrentSoundId[i] = currId;
+
+        u16 subtitleId;
+        serializeRead(serializer, &subtitleId, sizeof(subtitleId));
+        gCutsceneCurrentSubtitleId[i] = subtitleId;
+
+        u8 volume;
+        serializeRead(serializer, &volume, sizeof(volume));
+        gCutsceneCurrentVolume[i] = volume * (1.0f / 255.0f);
+        if (curr != SOUND_ID_NONE){
+            cutsceneQueueSound(gCutsceneCurrentSoundId[i], gCutsceneCurrentVolume[i], i, gCutsceneCurrentSubtitleId[i]);
+        }
+    }
+
+    for (int i = 0; i < CH_COUNT; ++i) {
         s16 nextId;
         serializeRead(serializer, &nextId, sizeof(nextId));
+        
 
         while (nextId != SOUND_ID_NONE) {
+            s16 nextSubtitleId;
+            serializeRead(serializer, &nextSubtitleId, sizeof(nextSubtitleId));
             u8 volume;
             serializeRead(serializer, &volume, sizeof(volume));
-            cutsceneQueueSound(nextId, volume * (1.0f / 255.0f), i);
+            cutsceneQueueSound(nextId, volume * (1.0f / 255.0f), i, nextSubtitleId);
             serializeRead(serializer, &nextId, sizeof(nextId));
         }
     }
 }
 
-void cutsceneQueueSoundInChannel(int soundId, float volume, int channel) {
-    if (!gCutsceneSoundQueues[channel] && !soundPlayerIsPlaying(gCutsceneCurrentSound[channel])) {
-        cutsceneQueueSound(soundsIntercom[0], volume, channel);
+void cutsceneQueueSoundInChannel(int soundId, float volume, int channel, int subtitleId) {
+    soundId = mapLocaleSound(soundId);
+    
+    if (!gCutsceneSoundQueues[channel] && !soundPlayerIsPlaying(gCutsceneCurrentSound[channel]) && channel == CH_GLADOS) {
+        cutsceneQueueSound(soundsIntercom[0], volume, channel, subtitleId);
     }
 
-    cutsceneQueueSound(soundId, volume, channel);
+    cutsceneQueueSound(soundId, volume, channel, subtitleId);
+}
+
+int cutsceneIsSoundQueued(){
+    int soundQueued = 0;
+    for (int i = 0; i < CH_COUNT; ++i) {
+        if((gCutsceneSoundQueues[i] != NULL || gCutsceneCurrentSound[i] != SOUND_ID_NONE) && (i == CH_GLADOS)){
+            soundQueued = 1;
+            break;
+        }
+    }
+    return soundQueued;
 }

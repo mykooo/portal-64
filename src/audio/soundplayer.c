@@ -5,6 +5,9 @@
 #include "util/time.h"
 #include "math/mathf.h"
 #include "clips.h"
+#include "../physics/collision_scene.h"
+#include "../math/transform.h"
+#include "../savefile/savefile.h"
 
 struct SoundArray* gSoundClipArray;
 ALSndPlayer gSoundPlayer;
@@ -26,7 +29,9 @@ struct ActiveSound {
     struct Vector3 pos3D;
     struct Vector3 velocity3D;
     float volume;
+    float originalVolume;
     float basePitch;
+    enum SoundType soundType;
 };
 
 struct SoundListener {
@@ -50,13 +55,48 @@ void soundPlayerDetermine3DSound(struct Vector3* at, struct Vector3* velocity, f
 
     struct SoundListener* nearestListener = &gSoundListeners[0];
     float distance = vector3DistSqrd(at, &gSoundListeners[0].worldPos);
+    int through_0_from_1 = 0;
+    int through_1_from_0 = 0;
 
-    for (int i = 1; i < MAX_SOUND_LISTENERS; ++i) {
+
+    int portalsPresent = 0;
+    struct Transform portal0transform;
+    struct Transform portal1transform;
+    if (gCollisionScene.portalTransforms[0] != NULL && gCollisionScene.portalTransforms[1] != NULL){
+        portalsPresent = 1;
+        portal0transform = *gCollisionScene.portalTransforms[0];
+        portal1transform = *gCollisionScene.portalTransforms[1];
+    }
+
+    for (int i = 0; i < MAX_SOUND_LISTENERS; ++i) {
         float check = vector3DistSqrd(at, &gSoundListeners[i].worldPos);
-
         if (check < distance) {
             distance = check;
             nearestListener = &gSoundListeners[i];
+            through_0_from_1 = 0;
+            through_1_from_0 = 0;
+        }
+
+        if (portalsPresent){
+            float dist1,dist2;
+            // check dist from obj to 0 portal + from 1 portal to listener
+            dist1 =  vector3DistSqrd(at, &portal0transform.position);
+            dist2 =  vector3DistSqrd(&portal1transform.position, &gSoundListeners[i].worldPos);
+            if ((dist1+dist2) < distance){
+                distance = (dist1+dist2);
+                nearestListener = &gSoundListeners[i];
+                through_0_from_1 = 1;
+                through_1_from_0 = 0;
+            }
+            // check dist from obj to 1 portal + from 0 portal to listener
+            dist1 =  vector3DistSqrd(at, &portal1transform.position);
+            dist2 =  vector3DistSqrd(&portal0transform.position, &gSoundListeners[i].worldPos);
+            if ((dist1+dist2) < distance){
+                distance = (dist1+dist2);
+                nearestListener = &gSoundListeners[i];
+                through_0_from_1 = 0;
+                through_1_from_0 = 1;
+            }
         }
     }
 
@@ -75,8 +115,16 @@ void soundPlayerDetermine3DSound(struct Vector3* at, struct Vector3* velocity, f
     }
 
     struct Vector3 offset;
-    vector3Sub(at, &nearestListener->worldPos, &offset);
-
+    if (through_0_from_1){
+        vector3Sub(&portal1transform.position, &nearestListener->worldPos, &offset);
+    }
+    else if(through_1_from_0){
+        vector3Sub(&portal0transform.position, &nearestListener->worldPos, &offset);
+    }
+    else{
+        vector3Sub(at, &nearestListener->worldPos, &offset);
+    }
+    
     struct Vector3 relativeVelocity;
     vector3Sub(velocity, &nearestListener->velocity, &relativeVelocity);
 
@@ -149,7 +197,8 @@ float soundPlayerEstimateLength(ALSound* sound, float speed) {
     return sampleCount * (1.0f / OUTPUT_RATE) / speed;
 }
 
-ALSndId soundPlayerPlay(int soundClipId, float volume, float pitch, struct Vector3* at, struct Vector3* velocity) {
+ALSndId soundPlayerPlay(int soundClipId, float volume, float pitch, struct Vector3* at, struct Vector3* velocity, enum SoundType type) {
+
     if (gActiveSoundCount >= MAX_ACTIVE_SOUNDS || soundClipId < 0 || soundClipId >= gSoundClipArray->soundCount) {
         return SOUND_ID_NONE;
     }
@@ -171,9 +220,16 @@ ALSndId soundPlayerPlay(int soundClipId, float volume, float pitch, struct Vecto
     sound->flags = 0;
     sound->estimatedTimeLeft = soundPlayerEstimateLength(alSound, pitch);
     sound->volume = volume;
+    sound->originalVolume = volume;
     sound->basePitch = pitch;
+    sound->soundType = type;
 
-    float startingVolume = volume;
+    float newVolume = sound->originalVolume * gSaveData.audio.soundVolume/0xFFFF;
+    if (type == SoundTypeMusic){
+        newVolume = newVolume * gSaveData.audio.musicVolume/0xFFFF;
+    }
+    sound->volume = newVolume;
+
     int panning = 64;
 
     if (at) {
@@ -181,7 +237,7 @@ ALSndId soundPlayerPlay(int soundClipId, float volume, float pitch, struct Vecto
         sound->pos3D = *at;
         sound->velocity3D = *velocity;
         float pitchBend;
-        soundPlayerDetermine3DSound(at, velocity, &startingVolume, &startingVolume, &panning, &pitchBend);
+        soundPlayerDetermine3DSound(at, velocity, &newVolume, &newVolume, &panning, &pitchBend);
         pitch = pitch * pitchBend;
     }
 
@@ -189,13 +245,17 @@ ALSndId soundPlayerPlay(int soundClipId, float volume, float pitch, struct Vecto
         sound->flags |= SOUND_FLAGS_LOOPING;
     }
 
+    
+
     alSndpSetSound(&gSoundPlayer, result);
-    alSndpSetVol(&gSoundPlayer, (short)(32767 * startingVolume));
+    alSndpSetVol(&gSoundPlayer, (short)(32767 * newVolume));
     alSndpSetPitch(&gSoundPlayer, pitch);
     alSndpSetPan(&gSoundPlayer, panning);
     alSndpPlay(&gSoundPlayer);
 
     ++gActiveSoundCount;
+
+    
 
     return result;
 }
@@ -207,6 +267,48 @@ float soundClipDuration(int soundClipId, float pitch) {
 
     ALSound* alSound = gSoundClipArray->sounds[soundClipId];
     return soundPlayerEstimateLength(alSound, pitch);
+}
+
+void soundPlayerGameVolumeUpdate() {
+    int index = 0;
+    while (index < gActiveSoundCount) {
+        struct ActiveSound* sound = &gActiveSounds[index];
+        if (!sound){
+            ++index;
+            continue;
+        }
+
+        float newVolume = sound->originalVolume * gSaveData.audio.soundVolume/0xFFFF;
+        if (sound->soundType == SoundTypeMusic){
+            newVolume = newVolume* gSaveData.audio.musicVolume/0xFFFF;
+        }
+        
+        if (sound->flags & SOUND_FLAGS_PAUSED) {
+            sound->volume = newVolume;
+            ++index;
+            continue;
+        }
+        if (sound->flags & SOUND_FLAGS_3D){
+            sound->volume = newVolume;
+            float volume;
+            float pitch;
+            int panning;
+            soundPlayerDetermine3DSound(&sound->pos3D, &sound->velocity3D, &sound->volume, &volume, &panning, &pitch);
+            alSndpSetSound(&gSoundPlayer, sound->soundId);
+            alSndpSetVol(&gSoundPlayer, (short)(32767 * volume));
+            alSndpSetPan(&gSoundPlayer, panning);
+            alSndpSetPitch(&gSoundPlayer, sound->basePitch * pitch);
+            ++index;
+            continue;
+            
+        } else {
+            alSndpSetSound(&gSoundPlayer, sound->soundId);
+            alSndpSetVol(&gSoundPlayer, (short)(32767 * newVolume));
+            sound->volume = newVolume;
+            ++index;
+            continue;
+        }
+    }
 }
 
 void soundPlayerUpdate() {
@@ -311,6 +413,10 @@ void soundPlayerAdjustVolume(ALSndId soundId, float newVolume) {
     struct ActiveSound* activeSound = soundPlayerFindActiveSound(soundId);
 
     if (activeSound) {
+        newVolume = newVolume * gSaveData.audio.soundVolume/0xFFFF;
+        if (activeSound->soundType == SoundTypeMusic){
+            newVolume = newVolume * gSaveData.audio.musicVolume/0xFFFF;
+        }
         if (activeSound->flags & SOUND_FLAGS_3D){
             activeSound->volume = newVolume;
         } else {
@@ -339,6 +445,20 @@ int soundPlayerIsPlaying(ALSndId soundId) {
 
     alSndpSetSound(&gSoundPlayer, soundId);
     return activeSound->estimatedTimeLeft > 0.0f && alSndpGetState(&gSoundPlayer) != AL_STOPPED;
+}
+
+int soundPlayerIsLoopedById(int soundId){
+    struct ActiveSound* activeSound = soundPlayerFindActiveSound(soundId);
+
+    if (!activeSound) {
+        return 0;
+    }
+
+    if (activeSound->flags & SOUND_FLAGS_LOOPING){
+        return 1;
+    }
+
+    return 0;
 }
 
 float soundPlayerTimeLeft(ALSndId soundId) {
@@ -385,4 +505,5 @@ void soundPlayerResume() {
             alSndpSetVol(&gSoundPlayer, (short)(32767 * activeSound->volume));
         }
     }
+    soundPlayerGameVolumeUpdate();
 }

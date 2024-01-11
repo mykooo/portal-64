@@ -30,14 +30,14 @@ struct ColliderTypeData gPortalColliderType = {
 #define CALC_SCREEN_SPACE(clip_space, screen_size) ((clip_space + 1.0f) * ((screen_size) / 2))
 
 struct Vector3 gPortalOutline[PORTAL_LOOP_SIZE] = {
-    {0.0f, 1.0f * SCENE_SCALE * PORTAL_COVER_HEIGHT, 0},
-    {0.353553f * SCENE_SCALE * PORTAL_COVER_WIDTH, 0.707107f * SCENE_SCALE * PORTAL_COVER_HEIGHT, 0},
-    {0.5f * SCENE_SCALE * PORTAL_COVER_WIDTH, 0.0f, 0},
-    {0.353553f * SCENE_SCALE * PORTAL_COVER_WIDTH, -0.707107f * SCENE_SCALE * PORTAL_COVER_HEIGHT, 0},
-    {0.0f, -1.0f * SCENE_SCALE * PORTAL_COVER_HEIGHT, 0},
-    {-0.353553f * SCENE_SCALE * PORTAL_COVER_WIDTH, -0.707107f * SCENE_SCALE * PORTAL_COVER_HEIGHT, 0},
-    {-0.5f * SCENE_SCALE * PORTAL_COVER_WIDTH, 0.0f, 0},
-    {-0.353553f * SCENE_SCALE * PORTAL_COVER_WIDTH, 0.707107f * SCENE_SCALE * PORTAL_COVER_HEIGHT, 0},
+    {0.0f, 1.0f * SCENE_SCALE * PORTAL_COVER_HEIGHT_RADIUS, 0},
+    {0.707107f * SCENE_SCALE * PORTAL_COVER_WIDTH_RADIUS, SCENE_SCALE * PORTAL_COVER_HEIGHT_RADIUS, 0},
+    {1.0f * SCENE_SCALE * PORTAL_COVER_WIDTH_RADIUS, 0.0f, 0},
+    {0.707107f * SCENE_SCALE * PORTAL_COVER_WIDTH_RADIUS, -1.0f * SCENE_SCALE * PORTAL_COVER_HEIGHT_RADIUS, 0},
+    {0.0f, -1.0f * SCENE_SCALE * PORTAL_COVER_HEIGHT_RADIUS, 0},
+    {-0.707107f * SCENE_SCALE * PORTAL_COVER_WIDTH_RADIUS, -1.0f * SCENE_SCALE * PORTAL_COVER_HEIGHT_RADIUS, 0},
+    {-1.0f * SCENE_SCALE * PORTAL_COVER_WIDTH_RADIUS, 0.0f, 0},
+    {-0.707107f * SCENE_SCALE * PORTAL_COVER_WIDTH_RADIUS, SCENE_SCALE * PORTAL_COVER_HEIGHT_RADIUS, 0},
 };
 
 #define PORTAL_CLIPPING_PLANE_BIAS  (SCENE_SCALE * 0.25f)
@@ -50,7 +50,7 @@ void portalInit(struct Portal* portal, enum PortalFlags flags) {
     rigidBodyMarkKinematic(&portal->rigidBody);
     portal->flags = flags;
     portal->opacity = 1.0f;
-    portal->scale = 0.0f;
+    portal->scale = 1.0f;
     portal->portalSurfaceIndex = -1;
     portal->transformIndex = NO_TRANSFORM_INDEX;
 }
@@ -72,49 +72,34 @@ void portalUpdate(struct Portal* portal, int isOpen) {
         if (portal->scale > 1.0f) {
             portal->scale = 1.0f;
         }
-        portal->flags |= PortalFlagsNeedsNewHole;
-        
     }
 }
 
-void portalCalculateBB(struct Portal* portal, struct Box3D* bb) {
+void portalCalculateBB(struct Transform* portalTransform, struct Box3D* bb) {
     struct Vector3 portalUp;
-    quatMultVector(&portal->rigidBody.transform.rotation, &gUp, &portalUp);
+    quatMultVector(&portalTransform->rotation, &gUp, &portalUp);
     struct Vector3 portalRight;
-    quatMultVector(&portal->rigidBody.transform.rotation, &gRight, &portalRight);
+    quatMultVector(&portalTransform->rotation, &gRight, &portalRight);
+    struct Vector3 portalNormal;
+    vector3Cross(&portalUp, &portalRight, &portalNormal);
 
-    vector3AddScaled(
-        &portal->rigidBody.transform.position,
-        &portalUp, PORTAL_COVER_HEIGHT * 0.5f,
-        &bb->min
-    );
+    bb->min = bb->max = portalTransform->position;
 
-    bb->max = bb->min;
+    struct Vector3 nextDir;
+    vector3Scale(&portalUp, &nextDir, PORTAL_COVER_HEIGHT_RADIUS);
+    box3DExtendDirection(bb, &nextDir, bb);
+    vector3Negate(&nextDir, &nextDir);
+    box3DExtendDirection(bb, &nextDir, bb);
 
-    struct Vector3 nextPoint;
-    vector3AddScaled(
-        &portal->rigidBody.transform.position,
-        &portalUp, -PORTAL_COVER_HEIGHT * 0.5f,
-        &nextPoint
-    );
+    vector3Scale(&portalRight, &nextDir, PORTAL_COVER_WIDTH_RADIUS);
+    box3DExtendDirection(bb, &nextDir, bb);
+    vector3Negate(&nextDir, &nextDir);
+    box3DExtendDirection(bb, &nextDir, bb);
 
-    box3DUnionPoint(bb, &nextPoint, bb);
-
-    vector3AddScaled(
-        &portal->rigidBody.transform.position,
-        &portalRight, PORTAL_COVER_WIDTH * 0.25f,
-        &nextPoint
-    );
-
-    box3DUnionPoint(bb, &nextPoint, bb);
-
-    vector3AddScaled(
-        &portal->rigidBody.transform.position,
-        &portalRight, -PORTAL_COVER_WIDTH * 0.25f,
-        &nextPoint
-    );
-
-    box3DUnionPoint(bb, &nextPoint, bb);
+    vector3Scale(&portalNormal, &nextDir, 0.1f);
+    box3DExtendDirection(bb, &nextDir, bb);
+    vector3Negate(&nextDir, &nextDir);
+    box3DExtendDirection(bb, &nextDir, bb);
 }
 
 int portalAttachToSurface(struct Portal* portal, struct PortalSurface* surface, int surfaceIndex, struct Transform* portalAt, int just_checking) {
@@ -131,13 +116,11 @@ int portalAttachToSurface(struct Portal* portal, struct PortalSurface* surface, 
     if (!portalSurfaceAdjustPosition(surface, portalAt, &correctPosition, portalOutline)) {
         return 0;
     }
-    
 
     for (int i = 0; i < PORTAL_LOOP_SIZE; ++i) {
         vector2s16Sub(&portalOutline[i], &correctPosition, &portal->originCentertedLoop[i]);
     }
-
-    portal->flags |= PortalFlagsNeedsNewHole;
+    
     portal->fullSizeLoopCenter = correctPosition;
 
     if (portal->portalSurfaceIndex == -1) {
@@ -152,8 +135,6 @@ int portalAttachToSurface(struct Portal* portal, struct PortalSurface* surface, 
 }
 
 int portalSurfaceCutNewHole(struct Portal* portal, int portalIndex) {
-    portal->flags &= ~PortalFlagsNeedsNewHole;
-
     if (portal->portalSurfaceIndex == -1) {
         return 1;
     }
@@ -175,28 +156,44 @@ int portalSurfaceCutNewHole(struct Portal* portal, int portalIndex) {
         return 0;
     }
     
-    portalSurfaceReplace(portal->portalSurfaceIndex, portal->rigidBody.currentRoom, portalIndex, &newSurface);
+    portalSurfaceReplace(portal->portalSurfaceIndex, portal->rigidBody.currentRoom, portalIndex, portal->scale, &newSurface);
 
     return 1;
 }
 
+int portalNeedsToRemoveSecondPortal(struct Portal* portals, int shouldMoveFirstPortal) {
+    int secondPortalSurfaceIndex = portalSurfaceGetSurfaceIndex(1);
+
+    // second portal isn't placed so no need to temporarily remove it
+    if (secondPortalSurfaceIndex == -1) {
+        return 0;
+    }
+
+    // first portal doesn't need to move, so no need to temporarily remove
+    // second portal
+    if (!shouldMoveFirstPortal) {
+        return 0;
+    }
+
+    // only remove second portal if the first one is moving to or from the same surface as the second
+    return portals[0].portalSurfaceIndex == secondPortalSurfaceIndex || portalSurfaceGetSurfaceIndex(0) == secondPortalSurfaceIndex;
+}
+
 void portalCheckForHoles(struct Portal* portals) {
-    if ((portals[1].flags & PortalFlagsNeedsNewHole) != 0 || (
-        portalSurfaceAreBothOnSameSurface() && (portals[0].flags & PortalFlagsNeedsNewHole) != 0
-    )) {
+    int shouldMoveSecondPortal = portalSurfaceShouldMove(1, portals[1].portalSurfaceIndex, portals[1].scale);
+    int shouldMoveFirstPortal = portalSurfaceShouldMove(0, portals[0].portalSurfaceIndex, portals[0].scale);
+
+    if (shouldMoveSecondPortal || portalNeedsToRemoveSecondPortal(portals, shouldMoveFirstPortal)) {
         portalSurfaceRevert(1);
-        portals[1].flags |= PortalFlagsNeedsNewHole;
+        shouldMoveSecondPortal = 1;
     }
 
-    if ((portals[0].flags & PortalFlagsNeedsNewHole) != 0) {
+    if (shouldMoveFirstPortal) {
         portalSurfaceRevert(0);
-    }
-
-    if ((portals[0].flags & PortalFlagsNeedsNewHole) != 0) {
         portalSurfaceCutNewHole(&portals[0], 0);
     }
 
-    if ((portals[1].flags & PortalFlagsNeedsNewHole) != 0) {
+    if (shouldMoveSecondPortal) {
         portalSurfaceCutNewHole(&portals[1], 1);
     }
 }

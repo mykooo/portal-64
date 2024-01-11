@@ -1,13 +1,14 @@
 
 #include <stdlib.h>
 #include "player.h"
+#include "player_rumble_clips.h"
 #include "../audio/clips.h"
 #include "../audio/soundplayer.h"
 #include "../controls/controller_actions.h"
 #include "../defs.h"
 #include "../levels/levels.h"
 #include "../math/mathf.h"
-#include "../physics/collision_sphere.h"
+#include "../physics/collision_capsule.h"
 #include "../physics/collision_scene.h"
 #include "../physics/collision.h"
 #include "../physics/config.h"
@@ -19,6 +20,7 @@
 
 #include "../build/assets/models/player/chell.h"
 #include "../build/assets/materials/static.h"
+#include "../build/assets/models/portal_gun/w_portalgun.h"
 
 #define GRAB_RAYCAST_DISTANCE   2.5f
 #define DROWN_TIME              2.0f
@@ -31,19 +33,23 @@
 
 #define PLAYER_COLLISION_LAYERS (COLLISION_LAYERS_TANGIBLE | COLLISION_LAYERS_FIZZLER | COLLISION_LAYERS_BLOCK_BALL)
 
+#define FUNNEL_DAMPENING_CONSTANT 0.32f
+#define FUNNEL_CENTERING_CONSTANT 0.05f
+#define FUNNEL_ACCEPTABLE_CENTERED_DISTANCE 0.1f
+#define FUNNEL_MAX_DIST 1.2f
+#define FUNNEL_MIN_DOWN_VEL -2.25f
+#define FUNNEL_MAX_HORZ_VEL 7.0f
+
 struct Vector3 gGrabDistance = {0.0f, 0.0f, -1.5f};
 struct Vector3 gCameraOffset = {0.0f, 0.0f, 0.0f};
 
-struct Vector3 gPortalGunOffset = {0.120957, -0.113587, -0.20916};
-struct Vector3 gPortalGunShootOffset = {0.120957, -0.113587, -0.08};
-struct Vector3 gPortalGunForward = {0.1f, -0.1f, 1.0f};
-struct Vector3 gPortalGunShootForward = {0.3f, -0.25f, 1.0f};
-struct Vector3 gPortalGunUp = {0.0f, 1.0f, 0.0f};
-
 struct CollisionQuad gPlayerColliderFaces[8];
 
-struct CollisionSphere gPlayerCollider = {
+#define TARGET_CAPSULE_EXTEND_HEIGHT   0.45f
+
+struct CollisionCapsule gPlayerCollider = {
     0.25f,
+    TARGET_CAPSULE_EXTEND_HEIGHT,
 };
 
 struct ColliderTypeData gPlayerColliderData = {
@@ -51,7 +57,7 @@ struct ColliderTypeData gPlayerColliderData = {
     &gPlayerCollider,
     0.0f,
     0.6f,
-    &gCollisionSphereCallbacks,
+    &gCollisionCapsuleCallbacks,
 };
 
 void playerRender(void* data, struct DynamicRenderDataList* renderList, struct RenderState* renderState) {
@@ -86,22 +92,35 @@ void playerRender(void* data, struct DynamicRenderDataList* renderList, struct R
 
     skCalculateTransforms(&player->armature, armature);
 
-    dynamicRenderListAddData(
+    Gfx* gunAttachment = portal_gun_w_portalgun_model_gfx;
+    Gfx* attachments = skBuildAttachments(&player->armature, (player->flags & (PlayerHasFirstPortalGun | PlayerHasSecondPortalGun)) ? &gunAttachment : NULL, renderState);
+
+    Gfx* objectRender = renderStateAllocateDLChunk(renderState, 4);
+    Gfx* dl = objectRender;
+
+    if (attachments) {
+        gSPSegment(dl++, BONE_ATTACHMENT_SEGMENT,  osVirtualToPhysical(attachments));
+    }
+    gSPSegment(dl++, MATRIX_TRANSFORM_SEGMENT,  osVirtualToPhysical(armature));
+    gSPDisplayList(dl++, player->armature.displayList);
+    gSPEndDisplayList(dl++);
+
+
+    dynamicRenderListAddDataTouchingPortal(
         renderList,
-        player_chell_model_gfx,
+        objectRender,
         matrix,
         DEFAULT_INDEX,
         &player->body.transform.position,
-        armature
+        armature,
+        player->body.flags
     );
 }
 
-void playerInit(struct Player* player, struct Location* startLocation, struct Vector3* velocity, struct CollisionObject* portalGunObject) {
-    player->flyingSoundLoopId = soundPlayerPlay(soundsFastFalling, 0.0f, 0.5f, NULL, NULL);
+void playerInit(struct Player* player, struct Location* startLocation, struct Vector3* velocity) {
+    player->flyingSoundLoopId = soundPlayerPlay(soundsFastFalling, 0.0f, 0.5f, NULL, NULL, SoundTypeAll);
 
     collisionObjectInit(&player->collisionObject, &gPlayerColliderData, &player->body, 1.0f, PLAYER_COLLISION_LAYERS);
-
-    
 
     // rigidBodyMarkKinematic(&player->body);
     player->body.flags |= RigidBodyIsKinematic | RigidBodyIsPlayer;
@@ -116,13 +135,13 @@ void playerInit(struct Player* player, struct Location* startLocation, struct Ve
     player->body.velocity = *velocity;
     player->grabbingThroughPortal = PLAYER_GRABBING_THROUGH_NOTHING;
     player->grabConstraint.object = NULL;
-    player->gunConstraint.object = NULL;
     player->pitchVelocity = 0.0f;
     player->yawVelocity = 0.0f;
     player->flags = 0;
     player->stepTimer = STEP_TIME;
     player->shakeTimer = 0.0f;
     player->currentFoot = 0;
+    player->passedThroughPortal = 0;
 
     if (gCurrentLevelIndex == 0){
         player->flags &= ~PlayerHasFirstPortalGun;
@@ -144,18 +163,17 @@ void playerInit(struct Player* player, struct Location* startLocation, struct Ve
     player->body.transform = player->lookTransform;
 
     player->anchoredTo = NULL;
+    player->lastAnchorToPosition = gZeroVec;
+    player->lastAnchorToVelocity = gZeroVec;
 
     collisionObjectUpdateBB(&player->collisionObject);
 
     dynamicSceneSetRoomFlags(player->dynamicId, ROOM_FLAG_FROM_INDEX(player->body.currentRoom));
-
-    pointConstraintInit(&player->gunConstraint, portalGunObject, 20.0f, 2.5f, 1, 0.5f);
-    contactSolverAddPointConstraint(&gContactSolver, &player->gunConstraint);
 }
 
 #define PLAYER_SPEED    (150.0f / 64.0f)
 #define PLAYER_ACCEL    (5.875f)
-#define PLAYER_AIR_ACCEL    (5.875f)
+#define PLAYER_AIR_ACCEL    (1.875f)
 #define PLAYER_STOP_ACCEL    (5.875f)
 #define PLAYER_SLIDE_ACCEL    (40.0f)
 
@@ -200,6 +218,7 @@ void playerHandleCollision(struct Player* player) {
 
         if ((contact->shapeA == &player->collisionObject) == (relativeVelocity > 0.0f)) {
             vector3ProjectPlane(&player->body.velocity, &contact->normal, &player->body.velocity);
+            playerHandleLandingRumble(relativeVelocity);
         }
 
         if (collisionObjectIsGrabbable(contact->shapeA) || collisionObjectIsGrabbable(contact->shapeB)) {
@@ -209,28 +228,36 @@ void playerHandleCollision(struct Player* player) {
 
         if (((isColliderForBall(contact->shapeA) || isColliderForBall(contact->shapeB)) && !playerIsDead(player))) {
             playerKill(player, 0);
-            soundPlayerPlay(soundsBallKill, 1.0f, 1.0f, NULL, NULL);
+            soundPlayerPlay(soundsBallKill, 1.0f, 1.0f, NULL, NULL, SoundTypeAll);
         }
     }
 }
 
 void playerApplyPortalGrab(struct Player* player, int portalIndex) {
-    if (player->grabbingThroughPortal == PLAYER_GRABBING_THROUGH_NOTHING) {
-        player->grabbingThroughPortal = portalIndex;
-    } else if (player->grabbingThroughPortal != portalIndex) {
-        player->grabbingThroughPortal = PLAYER_GRABBING_THROUGH_NOTHING;
+    if (portalIndex){
+        player->grabbingThroughPortal -= 1;
+    }else{
+        player->grabbingThroughPortal += 1;
     }
 }
 
 void playerSetGrabbing(struct Player* player, struct CollisionObject* grabbing) {
-    if (grabbing && !player->grabConstraint.object) {
-        pointConstraintInit(&player->grabConstraint, grabbing, 8.0f, 5.0f, 0, 1.0f);
+    if (grabbing && grabbing->flags & COLLISION_OBJECT_PLAYER_STANDING){
+        player->grabConstraint.object = NULL;
+        contactSolverRemovePointConstraint(&gContactSolver, &player->grabConstraint);
+        player->grabbingThroughPortal = PLAYER_GRABBING_THROUGH_NOTHING;
+    }
+    else if (grabbing && !player->grabConstraint.object) {
+        pointConstraintInit(&player->grabConstraint, grabbing, 8.0f, 5.0f, 1.0f);
         contactSolverAddPointConstraint(&gContactSolver, &player->grabConstraint);
+        hudResolvePrompt(&gScene.hud, CutscenePromptTypePickup);
     } else if (!grabbing && player->grabConstraint.object) {
         player->grabConstraint.object = NULL;
         contactSolverRemovePointConstraint(&gContactSolver, &player->grabConstraint);
+        hudResolvePrompt(&gScene.hud, CutscenePromptTypeDrop);
+        player->grabbingThroughPortal = PLAYER_GRABBING_THROUGH_NOTHING;
     } else if (grabbing != player->grabConstraint.object) {
-        pointConstraintInit(&player->grabConstraint, grabbing, 8.0f, 5.0f, 0, 1.0f);
+        pointConstraintInit(&player->grabConstraint, grabbing, 8.0f, 5.0f, 1.0f);
     }
 }
 
@@ -238,18 +265,17 @@ void playerShakeUpdate(struct Player* player) {
     if (player->shakeTimer > 0.0f){
         player->shakeTimer -= FIXED_DELTA_TIME;
 
-        float max = SHAKE_DISTANCE;
-        float min = -SHAKE_DISTANCE;
-        float x;
-        x = ((float)rand()/(float)(RAND_MAX));
-        x = min + x * ( max - min );
-        player->lookTransform.position.x += x;
-        x = ((float)rand()/(float)(RAND_MAX));
-        x = min + x * ( max - min );
-        player->lookTransform.position.y += x;
-        x = ((float)rand()/(float)(RAND_MAX));
-        x = min + x * ( max - min );
-        player->lookTransform.position.z += x;
+        float magnitude = 1.0f;
+
+        if (player->shakeTimer < 1.0f) {
+            magnitude = player->shakeTimer;
+        }
+
+        float max = SHAKE_DISTANCE * magnitude;
+        float min = -SHAKE_DISTANCE * magnitude;
+        player->lookTransform.position.x += randomInRangef(min, max);
+        player->lookTransform.position.y += randomInRangef(min, max);
+        player->lookTransform.position.z += randomInRangef(min, max);
 
         if (player->shakeTimer < 0.0f){
             player->shakeTimer = 0.0f;
@@ -306,18 +332,14 @@ void playerUpdateGrabbedObject(struct Player* player) {
             if (playerRaycastGrab(player, &hit, 0)) {
                 hit.object->flags |= COLLISION_OBJECT_INTERACTED;
 
-                if (hit.object->body && (hit.object->body->flags & RigidBodyFlagsGrabbable)) {
+                if (hit.object->body && (hit.object->body->flags & RigidBodyFlagsGrabbable) && !(hit.object->flags & COLLISION_OBJECT_PLAYER_STANDING)) {
                     playerSetGrabbing(player, hit.object);
                     player->flags |= PlayerJustSelect;
-
-                    if (hit.throughPortal) {
-                        player->grabbingThroughPortal = hit.throughPortal == gCollisionScene.portalTransforms[0] ? 0 : 1;
-                    } else {
-                        player->grabbingThroughPortal = PLAYER_GRABBING_THROUGH_NOTHING;
-                    }
+                    player->grabbingThroughPortal = hit.numPortalsPassed;
                 }
                 else if ((hit.object->body)){
                     player->flags |= PlayerJustSelect;
+                    hudResolvePrompt(&gScene.hud, CutscenePromptTypeUse);
                 }
                 else{
                     player->flags |= PlayerJustDeniedSelect;
@@ -331,6 +353,17 @@ void playerUpdateGrabbedObject(struct Player* player) {
 
     if (player->grabConstraint.object && (player->grabConstraint.object->body->flags & RigidBodyFlagsGrabbable) == 0) {
         playerSetGrabbing(player, NULL);
+    }
+
+    // if the object is being held through a portal and can no longer be seen, drop it.
+    if (player->grabConstraint.object && player->grabbingThroughPortal){
+        struct RaycastHit testhit;
+        if (playerRaycastGrab(player, &testhit, 0)){
+            if ((testhit.numPortalsPassed != player->grabbingThroughPortal) && (testhit.object != player->grabConstraint.object)){
+                playerSetGrabbing(player, NULL);
+                return;
+            }
+        }
     }
 
     if (player->grabConstraint.object) {
@@ -356,6 +389,7 @@ void playerUpdateGrabbedObject(struct Player* player) {
         // try to determine how far away to set the grab dist
         struct RaycastHit hit;
         struct Vector3 temp_grab_dist = gGrabDistance;
+
         if (playerRaycastGrab(player, &hit, 1)){
             float dist = hit.distance;
             temp_grab_dist.z = maxf(((-1.0f*fabsf(dist))+0.2f), gGrabDistance.z);
@@ -377,41 +411,18 @@ void playerUpdateGrabbedObject(struct Player* player) {
             }
 
             struct Transform pointTransform;
-            collisionSceneGetPortalTransform(player->grabbingThroughPortal, &pointTransform);
+            collisionSceneGetPortalTransform(player->grabbingThroughPortal > 0 ? 0 : 1, &pointTransform);
 
-            transformPoint(&pointTransform, &grabPoint, &grabPoint);
-            struct Quaternion finalRotation;
-            quatMultiply(&pointTransform.rotation, &grabRotation, &finalRotation);
-            grabRotation = finalRotation;
+            for (int i = 0; i < abs(player->grabbingThroughPortal); ++i) {
+                transformPoint(&pointTransform, &grabPoint, &grabPoint);
+                struct Quaternion finalRotation;
+                quatMultiply(&pointTransform.rotation, &grabRotation, &finalRotation);
+                grabRotation = finalRotation;
+            }
         }
 
         pointConstraintUpdateTarget(&player->grabConstraint, &grabPoint, &grabRotation);
     }
-}
-
-void playerUpdateGunObject(struct Player* player) {
-    struct Vector3 forward;
-    struct Vector3 offset;
-
-    if (player->flags & PlayerJustShotPortalGun){
-        forward = gPortalGunShootForward;
-        offset = gPortalGunShootOffset;
-    }else{
-        forward = gPortalGunForward;
-        offset = gPortalGunOffset;
-    }
-
-    struct Quaternion relativeRotation;
-    quatLook(&forward, &gPortalGunUp, &relativeRotation);
-    quatMultiply(&player->lookTransform.rotation, &relativeRotation, &player->gunConstraint.object->body->transform.rotation);
-
-
-    struct Vector3 gunPoint;
-    struct Vector3 temp_gun_dist = offset;
-    transformPoint(&player->lookTransform, &temp_gun_dist, &gunPoint);
-
-    pointConstraintUpdateTarget(&player->gunConstraint, &gunPoint, &player->gunConstraint.object->body->transform.rotation);
-    
 }
 
 void playerGetMoveBasis(struct Transform* transform, struct Vector3* forward, struct Vector3* right) {
@@ -441,6 +452,9 @@ void playerUpdateSpeedSound(struct Player* player) {
     soundPlayerVolume = sqrtf(vector3MagSqrd(&player->body.velocity))*(0.6f / MAX_PORTAL_SPEED);
     soundPlayerVolume = clampf(soundPlayerVolume, 0.0, 1.0f);
     soundPlayerAdjustVolume(player->flyingSoundLoopId, soundPlayerVolume);
+    if (soundPlayerVolume >= 0.75){
+        hudShowSubtitle(&gScene.hud, PORTALPLAYER_WOOSH, SubtitleTypeCaption);
+    }
 }
 
 void playerKill(struct Player* player, int isUnderwater) {
@@ -454,19 +468,62 @@ void playerKill(struct Player* player, int isUnderwater) {
     // drop the portal gun
     player->flags &= ~(PlayerHasFirstPortalGun | PlayerHasSecondPortalGun);
     playerSetGrabbing(player, NULL);
+    rumblePakClipPlay(&gPlayerDieRumbleWave);
 }
 
 int playerIsDead(struct Player* player) {
     return (player->flags & PlayerIsDead) != 0;
 }
 
+struct SKAnimationClip* gPlayerIdleClips[] = {
+    &player_chell_Armature_idle_clip,
+    &player_chell_Armature_idle_portalgun_clip,
+};
+
+struct SKAnimationClip* gPlayerRunSClips[] = {
+    &player_chell_Armature_runs_clip,
+    &player_chell_Armature_runs_portalgun_clip,
+};
+
+struct SKAnimationClip* gPlayerRunNClips[] = {
+    &player_chell_Armature_runn_clip,
+    &player_chell_Armature_runn_portalgun_clip,
+};
+
+struct SKAnimationClip* gPlayerRunWClips[] = {
+    &player_chell_Armature_runw_clip,
+    &player_chell_Armature_runw_portalgun_clip,
+};
+
+struct SKAnimationClip* gPlayerRunEClips[] = {
+    &player_chell_Armature_rune_clip,
+    &player_chell_Armature_rune_portalgun_clip,
+};
+
+struct SKAnimationClip* gPlayerJumpClips[] = {
+    &player_chell_Armature_standing_jump_clip,
+    &player_chell_Armature_standing_jump_portalgun_clip,
+};
+
 struct SKAnimationClip* playerDetermineNextClip(struct Player* player, float* blendLerp, float* startTime, struct Vector3* forwardDir, struct Vector3* rightDir) {
     float horzSpeed = player->body.velocity.x * player->body.velocity.x + player->body.velocity.z * player->body.velocity.z;
+
+    int clipOffset = 0;
+
+    if (player->flags & (PlayerHasFirstPortalGun | PlayerHasSecondPortalGun)) {
+        clipOffset = 1;
+    }
+
+    if (!(player->flags & PlayerFlagsGrounded)) {
+        *blendLerp = 0.0f;
+        *startTime = 0.0f;
+        return gPlayerJumpClips[clipOffset];
+    }
 
     if (horzSpeed < 0.0001f) {
         *blendLerp = 0.0f;
         *startTime = 0.0f;
-        return &player_chell_Armature_idle_clip;
+        return gPlayerIdleClips[clipOffset];
     }
 
     horzSpeed = sqrtf(horzSpeed);
@@ -488,15 +545,126 @@ struct SKAnimationClip* playerDetermineNextClip(struct Player* player, float* bl
 
     if (fabsf(forward) > fabsf(right)) {
         if (forward > 0.0f) {
-            return &player_chell_Armature_runs_clip;
+            return gPlayerRunSClips[clipOffset];
         } else {
-            return &player_chell_Armature_runn_clip;
+            return gPlayerRunNClips[clipOffset];
         }
     } else {
         if (right > 0.0f) {
-            return &player_chell_Armature_rune_clip;
+            return gPlayerRunEClips[clipOffset];
         } else {
-            return &player_chell_Armature_runw_clip;
+            return gPlayerRunWClips[clipOffset];
+        }
+    }
+}
+
+#define FOOTING_CAST_DISTANCE   (PLAYER_HEAD_HEIGHT + 0.2f)
+
+void playerUpdateFooting(struct Player* player, float maxStandDistance) {
+    if (player->anchoredTo){
+        player->lastAnchorToPosition = player->anchoredTo->transform.position;
+    }
+    player->anchoredTo = NULL;
+
+    struct Vector3 castOffset;
+    struct Vector3 hitLocation;
+
+    float hitDistance = FOOTING_CAST_DISTANCE;
+
+    vector3Scale(&gUp, &castOffset, -(hitDistance - gPlayerCollider.radius - gPlayerCollider.extendDownward));
+    if (collisionObjectCollideShapeCast(&player->collisionObject, &castOffset, &gCollisionScene, &hitLocation)) {
+        hitDistance = gPlayerCollider.radius + gPlayerCollider.extendDownward + player->collisionObject.body->transform.position.y - hitLocation.y;
+    }
+
+    struct RaycastHit hit;
+    struct Ray ray;
+    ray.origin = player->body.transform.position;
+    vector3Scale(&gUp, &ray.dir, -1.0f);
+    if (collisionSceneRaycastOnlyDynamic(&gCollisionScene, &ray, COLLISION_LAYERS_TANGIBLE, hitDistance, &hit)) {
+        hitDistance = hit.distance;
+
+        hit.object->flags |= COLLISION_OBJECT_PLAYER_STANDING;
+
+        if (hit.object == player->grabConstraint.object) {
+            playerSetGrabbing(player, NULL);
+        }
+
+        if (hit.object->body && (hit.object->body->flags & RigidBodyIsKinematic)) {
+            player->anchoredTo = hit.object->body;
+            player->lastAnchorPoint = hit.at;
+            transformPointInverseNoScale(&player->anchoredTo->transform, &hit.at, &player->relativeAnchor);
+        }
+    }
+    
+    float penetration = hitDistance - PLAYER_HEAD_HEIGHT;
+
+    if (penetration < 0.0f) {
+        vector3AddScaled(&player->body.transform.position, &gUp, MIN(-penetration, maxStandDistance), &player->body.transform.position);
+        if (player->body.velocity.y < 0.0f) {
+            playerHandleLandingRumble(-player->body.velocity.y);
+            player->body.velocity.y = 0.0f;
+        }
+
+        if (!(player->flags & PlayerFlagsGrounded)){
+            player->flags |= PlayerJustLanded;
+        }
+        player->flags |= PlayerFlagsGrounded;
+    } else {
+        player->flags &= ~PlayerFlagsGrounded;
+    }
+}
+
+void playerPortalFunnel(struct Player* player) {
+    if (gCollisionScene.portalTransforms[0] != NULL && gCollisionScene.portalTransforms[1] != NULL){
+        struct Transform portal0transform = *gCollisionScene.portalTransforms[0];
+        struct Transform portal1transform = *gCollisionScene.portalTransforms[1];
+        struct Transform targetPortalTransform;
+
+        //remove z from distance calc
+        portal0transform.position.y = player->body.transform.position.y;
+        portal1transform.position.y = player->body.transform.position.y;
+        
+        float portal0dist = vector3DistSqrd(&player->body.transform.position, &portal0transform.position);
+        float portal1dist = vector3DistSqrd(&player->body.transform.position, &portal1transform.position);
+        float targetDist;
+
+        if (portal0dist < portal1dist){
+            targetPortalTransform = portal0transform;
+            targetDist = portal0dist;
+        } else{
+            targetPortalTransform = portal1transform;
+            targetDist = portal1dist;
+        }
+
+        struct Vector3 straightForward;
+        vector3Negate(&gForward, &straightForward);
+        quatMultVector(&targetPortalTransform.rotation, &straightForward, &straightForward);
+        if (fabsf(straightForward.y) > 0.999f) {
+            if (!(player->flags & PlayerFlagsGrounded) && 
+                targetDist < (FUNNEL_MAX_DIST*FUNNEL_MAX_DIST) && 
+                player->body.velocity.y < FUNNEL_MIN_DOWN_VEL && 
+                fabsf(player->body.velocity.x) < FUNNEL_MAX_HORZ_VEL && 
+                fabsf(player->body.velocity.z) < FUNNEL_MAX_HORZ_VEL){
+                    if (player->body.transform.position.x < targetPortalTransform.position.x - FUNNEL_ACCEPTABLE_CENTERED_DISTANCE){
+                        player->body.velocity.x += (FUNNEL_DAMPENING_CONSTANT * (targetPortalTransform.position.x - player->body.transform.position.x));
+                    }
+                    else if (player->body.transform.position.x > targetPortalTransform.position.x + FUNNEL_ACCEPTABLE_CENTERED_DISTANCE){
+                        player->body.velocity.x -= (FUNNEL_DAMPENING_CONSTANT * (player->body.transform.position.x - targetPortalTransform.position.x));
+                    }
+                    else{
+                        player->body.velocity.x *= FUNNEL_CENTERING_CONSTANT;
+                    }
+
+                    if (player->body.transform.position.z < targetPortalTransform.position.z - FUNNEL_ACCEPTABLE_CENTERED_DISTANCE){
+                        player->body.velocity.z += (FUNNEL_DAMPENING_CONSTANT * (targetPortalTransform.position.z - player->body.transform.position.z));
+                    }
+                    else if (player->body.transform.position.z > targetPortalTransform.position.z + FUNNEL_ACCEPTABLE_CENTERED_DISTANCE){
+                        player->body.velocity.z -= (FUNNEL_DAMPENING_CONSTANT * (player->body.transform.position.z - targetPortalTransform.position.z));
+                    }
+                    else{
+                        player->body.velocity.z *= FUNNEL_CENTERING_CONSTANT;
+                    }
+            }
         }
     }
 }
@@ -504,6 +672,8 @@ struct SKAnimationClip* playerDetermineNextClip(struct Player* player, float* bl
 void playerUpdate(struct Player* player) {
     struct Vector3 forward;
     struct Vector3 right;
+
+    player->passedThroughPortal = 0;
 
     if (player->flags & PlayerInCutscene) {
         return;
@@ -517,8 +687,13 @@ void playerUpdate(struct Player* player) {
     int isDead = playerIsDead(player);
 
     if (!isDead && (player->flags & PlayerFlagsGrounded) && controllerActionGet(ControllerActionJump)) {
-        player->body.velocity.y = JUMP_IMPULSE;
+        player->body.velocity.y += JUMP_IMPULSE;
+        if (!vector3IsZero(&player->lastAnchorToVelocity) && player->anchoredTo != NULL){
+            player->body.velocity.x += player->lastAnchorToVelocity.x;
+            player->body.velocity.z += player->lastAnchorToVelocity.z;
+        }
         player->flags |= PlayerJustJumped;
+        hudResolvePrompt(&gScene.hud, CutscenePromptTypeJump);
     }
 
     struct Vector3 targetVelocity = gZeroVec;
@@ -531,8 +706,24 @@ void playerUpdate(struct Player* player) {
         camera_y_modifier = 0.0;
     }
 
+    struct Vector2 moveInput = controllerDirectionGet(ControllerActionMove);
+    struct Vector2 lookInput = controllerDirectionGet(ControllerActionRotate);
+
+    if (gSaveData.controls.flags & ControlSaveTankControls) {
+        float tmp;
+        tmp = moveInput.y;
+        moveInput.y = lookInput.y;
+        lookInput.y = tmp;
+    }
+
+    if (moveInput.x != 0.0f || moveInput.y != 0.0f) {
+        hudResolvePrompt(&gScene.hud, CutscenePromptTypeMove);
+    }
+
     if (!isDead) {
-        struct Vector2 moveInput = controllerDirectionGet(ControllerActionMove);
+        if (vector2MagSqr(&moveInput) > 1.0f){
+            vector2Normalize(&moveInput, &moveInput);
+        }
 
         vector3AddScaled(&targetVelocity, &right, PLAYER_SPEED * moveInput.x, &targetVelocity);
         vector3AddScaled(&targetVelocity, &forward, -PLAYER_SPEED * moveInput.y, &targetVelocity);
@@ -550,35 +741,21 @@ void playerUpdate(struct Player* player) {
 
         //look straight forward
         if (controllerActionGet(ControllerActionLookForward)){
-            struct Vector3 lookingForward;
-            vector3Negate(&gForward, &lookingForward);
-            quatMultVector(&player->lookTransform.rotation, &lookingForward, &lookingForward);
-            if (fabsf(lookingForward.y) < 0.999f) {
-                lookingForward.y = 0;
-                quatLook(&lookingForward, &gUp, &player->lookTransform.rotation);
-            }
+            struct Vector3 forwardNegate;
+            vector3Negate(&forward, &forwardNegate);
+            quatLook(&forwardNegate, &gUp, &player->lookTransform.rotation);
         }
         //look behind
         if (controllerActionGet(ControllerActionLookBackward)){
-            struct Vector3 lookingForward;
-            vector3Negate(&gForward, &lookingForward);
-            quatMultVector(&player->lookTransform.rotation, &lookingForward, &lookingForward);
-            if (fabsf(lookingForward.y) < 0.999f) {
-                lookingForward.y = 0;
-                quatLook(&lookingForward, &gUp, &player->lookTransform.rotation);
-                //look directly behind
-                struct Quaternion behindRotation;
-                behindRotation.x=(player->lookTransform.rotation.z);
-                behindRotation.y=player->lookTransform.rotation.w;
-                behindRotation.z=(-1.0f*player->lookTransform.rotation.x);
-                behindRotation.w=(-1.0f*player->lookTransform.rotation.y);
-
-                player->lookTransform.rotation = behindRotation;
-            }
+            quatLook(&forward, &gUp, &player->lookTransform.rotation);
         }
     }
 
     targetVelocity.y = player->body.velocity.y;
+    if (!vector3IsZero(&player->lastAnchorToVelocity) && !(player->flags & PlayerFlagsGrounded) && !(player->anchoredTo)){
+        targetVelocity.x += player->lastAnchorToVelocity.x/FIXED_DELTA_TIME;
+        targetVelocity.z += player->lastAnchorToVelocity.z/FIXED_DELTA_TIME;
+    }
 
     float velocityDot = vector3Dot(&player->body.velocity, &targetVelocity);
     int isAccelerating = velocityDot > 0.0f;
@@ -588,13 +765,6 @@ void playerUpdate(struct Player* player) {
     playerUpdateSpeedSound(player);
 
     if (!(player->flags & PlayerFlagsGrounded)) {
-        if (isFast) {
-            struct Vector3 movementCenter;
-            vector3Scale(&player->body.velocity, &movementCenter, -PLAYER_SPEED / sqrtf(velocitySqrd));
-            targetVelocity.x += player->body.velocity.x + movementCenter.x;
-            targetVelocity.z += player->body.velocity.z + movementCenter.z;
-        }
-
         acceleration = PLAYER_AIR_ACCEL * FIXED_DELTA_TIME;
     } else if (isFast) {
         acceleration = PLAYER_SLIDE_ACCEL * FIXED_DELTA_TIME;
@@ -625,45 +795,19 @@ void playerUpdate(struct Player* player) {
         vector3Sub(&player->body.transform.position, &player->lastAnchorPoint, &player->body.transform.position);
     }
 
+    if (!vector3IsZero(&player->lastAnchorToPosition) && player->anchoredTo){
+        vector3Sub(&player->anchoredTo->transform.position, &player->lastAnchorToPosition, &player->lastAnchorToVelocity);
+    }
+    else if (!(player->anchoredTo) && (player->flags & PlayerFlagsGrounded)){
+        player->lastAnchorToVelocity = gZeroVec;
+    }
+
     struct Box3D sweptBB = player->collisionObject.boundingBox;
     collisionObjectUpdateBB(&player->collisionObject);
     box3DUnion(&sweptBB, &player->collisionObject.boundingBox, &sweptBB);
     collisionObjectCollideMixed(&player->collisionObject, &prevPos, &sweptBB, &gCollisionScene, &gContactSolver);
 
-    player->anchoredTo = NULL;
-
-    struct RaycastHit hit;
-    struct Ray ray;
-    ray.origin = player->body.transform.position;
-    vector3Scale(&gUp, &ray.dir, -1.0f);
-    if (collisionSceneRaycast(&gCollisionScene, player->body.currentRoom, &ray, COLLISION_LAYERS_TANGIBLE, PLAYER_HEAD_HEIGHT + 0.2f, 1, &hit)) {
-        float penetration = hit.distance - PLAYER_HEAD_HEIGHT;
-
-        if (penetration < 0.0f) {
-            vector3AddScaled(&player->body.transform.position, &gUp, MIN(-penetration, STAND_SPEED * FIXED_DELTA_TIME), &player->body.transform.position);
-            if (player->body.velocity.y < 0.0f) {
-                player->body.velocity.y = 0.0f;
-            }
-        }
-
-        hit.object->flags |= COLLISION_OBJECT_PLAYER_STANDING;
-        if (!(player->flags & PlayerFlagsGrounded)){
-            player->flags |= PlayerJustLanded;
-        }
-        player->flags |= PlayerFlagsGrounded;
-
-        if (hit.object == player->grabConstraint.object) {
-            playerSetGrabbing(player, NULL);
-        }
-
-        if (hit.object->body && (hit.object->body->flags & RigidBodyIsKinematic)) {
-            player->anchoredTo = hit.object->body;
-            player->lastAnchorPoint = hit.at;
-            transformPointInverseNoScale(&player->anchoredTo->transform, &hit.at, &player->relativeAnchor);
-        }
-    } else {
-        player->flags &= ~PlayerFlagsGrounded;
-    }
+    playerUpdateFooting(player, STAND_SPEED * FIXED_DELTA_TIME);
     
     struct ContactManifold* manifold = contactSolverNextManifold(&gContactSolver, &player->collisionObject, NULL);
 
@@ -678,6 +822,7 @@ void playerUpdate(struct Player* player) {
     player->body.transform.rotation = player->lookTransform.rotation;    
 
     int didPassThroughPortal = rigidBodyCheckPortals(&player->body);
+    player->passedThroughPortal = didPassThroughPortal;
 
     player->lookTransform.position = player->body.transform.position;
     player->lookTransform.position.y += camera_y_modifier;
@@ -689,17 +834,20 @@ void playerUpdate(struct Player* player) {
     quatIdent(&player->body.transform.rotation);
 
     if (didPassThroughPortal) {
-        soundPlayerPlay(soundsPortalEnter[didPassThroughPortal - 1], 0.75f, 1.0f, NULL, NULL);
-        soundPlayerPlay(soundsPortalExit[2 - didPassThroughPortal], 0.75f, 1.0f, NULL, NULL);
+        soundPlayerPlay(soundsPortalEnter[didPassThroughPortal - 1], 0.75f, 1.0f, NULL, NULL, SoundTypeAll);
+        hudShowSubtitle(&gScene.hud, PORTALPLAYER_ENTERPORTAL, SubtitleTypeCaption);
+        soundPlayerPlay(soundsPortalExit[2 - didPassThroughPortal], 0.75f, 1.0f, NULL, NULL, SoundTypeAll);
+        hudShowSubtitle(&gScene.hud, PORTALPLAYER_EXITPORTAL, SubtitleTypeCaption);
+        gPlayerCollider.extendDownward = 0.0f;
+    } else {
+        gPlayerCollider.extendDownward = mathfMoveTowards(gPlayerCollider.extendDownward, TARGET_CAPSULE_EXTEND_HEIGHT, STAND_SPEED * FIXED_DELTA_TIME);
     }
 
-    struct Vector2 lookInput = controllerDirectionGet(ControllerActionRotate);
     float rotateRate = mathfLerp(MIN_ROTATE_RATE, MAX_ROTATE_RATE, (float)gSaveData.controls.sensitivity / 0xFFFF);
     float targetYaw = -lookInput.x * rotateRate;
     float targetPitch = lookInput.y * rotateRate;
 
     if (gSaveData.controls.flags & ControlSaveFlagsInvert) {
-        targetYaw = -targetYaw;
         targetPitch = -targetPitch;
     }
 
@@ -756,11 +904,12 @@ void playerUpdate(struct Player* player) {
     }
 
     playerUpdateGrabbedObject(player);
-    playerUpdateGunObject(player);
 
     collisionObjectUpdateBB(&player->collisionObject);
 
-    player->body.currentRoom = worldCheckDoorwayCrossings(&gCurrentLevel->world, &player->lookTransform.position, player->body.currentRoom, doorwayMask);
+    if (!didPassThroughPortal) {
+        player->body.currentRoom = worldCheckDoorwayCrossings(&gCurrentLevel->world, &player->lookTransform.position, player->body.currentRoom, doorwayMask);
+    }
     dynamicSceneSetRoomFlags(player->dynamicId, ROOM_FLAG_FROM_INDEX(player->body.currentRoom));
 
     float startTime = 0.0f;
@@ -779,6 +928,12 @@ void playerUpdate(struct Player* player) {
         }
     }
 
+
+    if ((gSaveData.controls.flags & ControlSavePortalFunneling) && (vector2MagSqr(&moveInput) == 0.0f)){
+        playerPortalFunnel(player);
+    }
+    
+    
     // player not moving on ground
     if ((player->flags & PlayerFlagsGrounded) && (player->body.velocity.x == 0) && (player->body.velocity.z == 0)){
         player->stepTimer = STEP_TIME;
@@ -794,7 +949,6 @@ void playerUpdate(struct Player* player) {
             player->currentFoot = !player->currentFoot;
         }
     }
-
 }
 
 void playerApplyCameraTransform(struct Player* player, struct Transform* cameraTransform) {

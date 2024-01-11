@@ -5,6 +5,46 @@
 #include "defs.h"
 #include "../graphics/render_scene.h"
 #include "../math/mathf.h"
+#include "../scene/signals.h"
+
+#include "../build/assets/materials/static.h"
+
+void staticRenderTraverseIndex(
+    struct StaticContentBox* box, 
+    struct StaticContentBox* boxEnd, 
+    struct StaticContentElement* staticContent, 
+    struct FrustrumCullingInformation* cullingInfo, 
+    struct RenderScene* renderScene
+) {
+    struct StaticContentBox* fullyVisibleEnd = box;    
+
+    while (box < boxEnd) {
+        if (box >= fullyVisibleEnd) {
+            enum FrustrumResult cullResult = isOutsideFrustrum(cullingInfo, &box->box);
+
+            if (cullResult == FrustrumResultOutisde) {
+                // skip all children
+                box = box + box->siblingOffset;
+                continue;
+            } else if (cullResult == FrustrumResultInside) {
+                fullyVisibleEnd = box + box->siblingOffset;
+            }
+        }
+
+        for (int i = box->staticRange.min; i < box->staticRange.max; ++i) {
+            renderSceneAdd(
+                renderScene, 
+                staticContent[i].displayList, 
+                NULL, 
+                staticContent[i].materialIndex, 
+                &staticContent[i].center, 
+                NULL
+            );
+        }
+
+        box += 1;
+    }
+}
 
 void staticRenderPopulateRooms(struct FrustrumCullingInformation* cullingInfo, Mtx* staticTransforms, struct RenderScene* renderScene) {
     int currentRoom = 0;
@@ -13,55 +53,49 @@ void staticRenderPopulateRooms(struct FrustrumCullingInformation* cullingInfo, M
 
     while (visibleRooms) {
         if (0x1 & visibleRooms) {
-            struct Rangeu16 staticRange = gCurrentLevel->roomStaticMapping[currentRoom];
+            struct StaticIndex* roomIndex = &gCurrentLevel->roomBvhList[currentRoom];
+    
+            staticRenderTraverseIndex(roomIndex->boxIndex, roomIndex->boxIndex + roomIndex->boxCount, gCurrentLevel->staticContent, cullingInfo, renderScene);
 
-            for (int i = staticRange.min; i < staticRange.max; ++i) {
-                struct BoundingBoxs16* box = &gCurrentLevel->staticBoundingBoxes[i];
+            struct BoundingBoxs16* animatedBox = roomIndex->animatedBoxes;
 
-                Mtx* matrix = NULL;
+            for (int i = roomIndex->animatedRange.min; i < roomIndex->animatedRange.max; ++i, ++animatedBox) {
+                struct StaticContentElement* staticElement = &gCurrentLevel->staticContent[i];
 
-                int transformIndex = gCurrentLevel->staticContent[i].transformIndex;
+                Mtx* matrix = &staticTransforms[staticElement->transformIndex];
 
-                struct Vector3 boxCenter;
+                short* mtxAsShorts = (short*)matrix;
 
-                if (transformIndex == NO_TRANSFORM_INDEX) {
-                    if (isOutsideFrustrum(cullingInfo, box)) {
-                        continue;
-                    }
+                int x = mtxAsShorts[12];
+                int y = mtxAsShorts[13];
+                int z = mtxAsShorts[14];
 
-                    boxCenter.x = (float)((box->minX + box->maxX) * (0.5f / SCENE_SCALE));
-                    boxCenter.y = (float)(box->minY + box->maxY) * (0.5f / SCENE_SCALE);
-                    boxCenter.z = (float)(box->minZ + box->maxZ) * (0.5f / SCENE_SCALE);
-                } else {
-                    matrix = &staticTransforms[transformIndex];
+                struct BoundingBoxs16 shiftedBox;
+                shiftedBox.minX = animatedBox->minX + x;
+                shiftedBox.minY = animatedBox->minY + y;
+                shiftedBox.minZ = animatedBox->minZ + z;
 
-                    short* mtxAsShorts = (short*)matrix;
+                shiftedBox.maxX = animatedBox->maxX + x;
+                shiftedBox.maxY = animatedBox->maxY + y;
+                shiftedBox.maxZ = animatedBox->maxZ + z;
 
-                    boxCenter = gZeroVec;
-
-                    int x = mtxAsShorts[12];
-                    int y = mtxAsShorts[13];
-                    int z = mtxAsShorts[14];
-
-                    struct BoundingBoxs16 shiftedBox;
-                    shiftedBox.minX = box->minX + x;
-                    shiftedBox.minY = box->minY + y;
-                    shiftedBox.minZ = box->minZ + z;
-
-                    shiftedBox.maxX = box->maxX + x;
-                    shiftedBox.maxY = box->maxY + y;
-                    shiftedBox.maxZ = box->maxZ + z;
-
-                    if (isOutsideFrustrum(cullingInfo, &shiftedBox)) {
-                        continue;
-                    }
-
-                    boxCenter.x = (float)(shiftedBox.minX + shiftedBox.maxX) * (0.5f / SCENE_SCALE);
-                    boxCenter.y = (float)(shiftedBox.minY + shiftedBox.maxY) * (0.5f / SCENE_SCALE);
-                    boxCenter.z = (float)(shiftedBox.minZ + shiftedBox.maxZ) * (0.5f / SCENE_SCALE);
+                if (isOutsideFrustrum(cullingInfo, &shiftedBox) == FrustrumResultOutisde) {
+                    continue;
                 }
 
-                renderSceneAdd(renderScene, gCurrentLevel->staticContent[i].displayList, matrix, gCurrentLevel->staticContent[i].materialIndex, &boxCenter, NULL);
+                struct Vector3 boxCenter;
+                boxCenter.x = (float)(shiftedBox.minX + shiftedBox.maxX) * (0.5f / SCENE_SCALE);
+                boxCenter.y = (float)(shiftedBox.minY + shiftedBox.maxY) * (0.5f / SCENE_SCALE);
+                boxCenter.z = (float)(shiftedBox.minZ + shiftedBox.maxZ) * (0.5f / SCENE_SCALE);
+
+                renderSceneAdd(
+                    renderScene, 
+                    staticElement->displayList, 
+                    matrix, 
+                    staticElement->materialIndex, 
+                    &boxCenter, 
+                    NULL
+                );
             }
         }
 
@@ -117,10 +151,37 @@ void staticRender(struct Transform* cameraTransform, struct FrustrumCullingInfor
     struct RenderScene* renderScene = renderSceneNew(cameraTransform, renderState, MAX_RENDER_COUNT, visibleRooms);
 
     staticRenderPopulateRooms(cullingInfo, staticTransforms, renderScene);
-
     dynamicRenderPopulateRenderScene(dynamicList, stageIndex, renderScene, cameraTransform, cullingInfo, visibleRooms);
-
     renderSceneGenerate(renderScene, renderState);
 
     renderSceneFree(renderScene);
+}
+
+u8 gSignalMaterialMapping[] = {
+    INDICATOR_LIGHTS_INDEX, INDICATOR_LIGHTS_ON_INDEX,
+    SIGNAGE_DOORSTATE_INDEX, SIGNAGE_DOORSTATE_ON_INDEX,
+};
+
+void staticRenderCheckSignalMaterials() {
+    for (int signal = 0; signal < gCurrentLevel->signalToStaticCount; ++signal) {
+        int currentSignal = signalsRead(signal);
+
+        if (currentSignal != signalsReadPrevious(signal)) {
+            struct Rangeu16* range = &gCurrentLevel->signalToStaticRanges[signal];
+
+            int toIndex = currentSignal ? 1 : 0;
+            int fromIndex = currentSignal ? 0 : 1;
+
+            for (int index = range->min; index < range->max; ++index) {
+                struct StaticContentElement* element = &gCurrentLevel->staticContent[gCurrentLevel->signalToStaticIndices[index]];
+
+                for (int materialIndex = 0; materialIndex < sizeof(gSignalMaterialMapping) / sizeof(*gSignalMaterialMapping); materialIndex += 2) {
+                    if (element->materialIndex == gSignalMaterialMapping[materialIndex + fromIndex]) {
+                        element->materialIndex = gSignalMaterialMapping[materialIndex + toIndex];
+                        break;
+                    }
+                }
+            }
+        }
+    }
 }

@@ -13,6 +13,7 @@
 #include "./door.h"
 #include "./fizzler.h"
 #include "elevator.h"
+#include "hud.h"
 #include "pedestal.h"
 #include "signage.h"
 #include "box_dropper.h"
@@ -23,6 +24,8 @@
 #include "portal_gun.h"
 #include "clock.h"
 #include "security_camera.h"
+#include "trigger_listener.h"
+#include "../effects/effects.h"
 
 struct SavedPortal {
     struct Ray ray;
@@ -44,6 +47,7 @@ struct Scene {
     struct Portal portals[2];
     struct Button* buttons;
     struct DecorObject** decor;
+    struct TriggerListener* triggerListeners;
     struct Door* doors;
     struct Fizzler* fizzlers;
     struct Elevator* elevators;
@@ -59,11 +63,14 @@ struct Scene {
     struct Clock* clocks;
     struct SecurityCamera* securityCameras;
     struct SavedPortal savedPortal;
+    struct Effects effects;
+    struct Hud hud;
     OSTime cpuTime;
     OSTime lastFrameStart;
     OSTime lastFrameTime;
     u8 buttonCount;
     u8 decorCount;
+    u8 triggerListenerCount;
     u8 doorCount;
     u8 fizzlerCount;
     u8 elevatorCount;
@@ -75,14 +82,11 @@ struct Scene {
     u8 ballCatcherCount;
     u8 clockCount;
     u8 securityCameraCount;
+    u8 boolCutsceneIsRunning;
 
-    u8 last_portal_indx_shot;
-    u8 looked_wall_portalable_0;
-    u8 looked_wall_portalable_1;
     u8 continuouslyAttemptingPortalOpen;
     u8 checkpointState;
-
-    float fadeInTimer;
+    u8 ignorePortalGun;
 };
 
 extern struct Scene gScene;
@@ -90,12 +94,13 @@ extern struct Scene gScene;
 struct GraphicsTask;
 
 void sceneInit(struct Scene* scene);
-void sceneInitNoPauseMenu(struct Scene* scene);
+void sceneInitNoPauseMenu(struct Scene* scene, int mainMenuMode);
 void sceneRender(struct Scene* scene, struct RenderState* renderState, struct GraphicsTask* task);
 void sceneUpdate(struct Scene* scene);
 void sceneQueueCheckpoint(struct Scene* scene);
 
+int sceneOpenPortalFromHit(struct Scene* scene, struct Ray* ray, struct RaycastHit* hit, struct Vector3* playerUp, int portalIndex, int roomIndex, int fromPlayer, int just_checking);
 int sceneFirePortal(struct Scene* scene, struct Ray* ray, struct Vector3* playerUp, int portalIndex, int roomIndex, int fromPlayer, int just_checking);
-void sceneClosePortal(struct Scene* scene, int portalIndex);
+int sceneClosePortal(struct Scene* scene, int portalIndex);
 
 #endif

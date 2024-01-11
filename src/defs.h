@@ -12,6 +12,7 @@
 
 #define INIT_PRIORITY		10
 #define GAME_PRIORITY		10
+#define CONTROLLER_PRIORITY 11
 #define AUDIO_PRIORITY		12
 #define SCHEDULER_PRIORITY	13
 #define NUM_FIELDS      1 
@@ -25,7 +26,7 @@
 #define SCENE_SCALE 256
 #endif
 
-#define MAX_DYNAMIC_OBJECTS     32
+#define MAX_DYNAMIC_OBJECTS     48
 
 #define MAX_RENDER_COUNT        256
 

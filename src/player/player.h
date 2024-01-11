@@ -11,7 +11,7 @@
 #include "../sk64/skelatool_armature.h"
 #include "../physics/point_constraint.h"
 
-#define PLAYER_GRABBING_THROUGH_NOTHING -1
+#define PLAYER_GRABBING_THROUGH_NOTHING 0
 
 #define PLAYER_HEAD_HEIGHT              1.0f
 
@@ -40,22 +40,25 @@ struct Player {
     short grabbingThroughPortal;
     short dynamicId;
     struct PointConstraint grabConstraint;
-    struct PointConstraint gunConstraint;
     float pitchVelocity;
     float yawVelocity;
     enum PlayerFlags flags;
     struct RigidBody* anchoredTo;
+    struct Vector3 lastAnchorToPosition;
+    struct Vector3 lastAnchorToVelocity;
     struct Vector3 relativeAnchor;
     struct Vector3 lastAnchorPoint;
     short flyingSoundLoopId;
     float drownTimer;
     float stepTimer;
     float shakeTimer;
-    int currentFoot; //left=0, right=1
+    short currentFoot; //left=0, right=1
+    short passedThroughPortal;
 };
 
-void playerInit(struct Player* player, struct Location* startLocation, struct Vector3* velocity, struct CollisionObject* portalGunObject);
+void playerInit(struct Player* player, struct Location* startLocation, struct Vector3* velocity);
 void playerUpdate(struct Player* player);
+void playerUpdateFooting(struct Player* player, float maxStandDistance);
 void playerApplyCameraTransform(struct Player* player, struct Transform* cameraTransform);
 
 void playerGetMoveBasis(struct Transform* transform, struct Vector3* forward, struct Vector3* right);

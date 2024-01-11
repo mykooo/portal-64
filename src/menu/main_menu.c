@@ -11,11 +11,12 @@
 
 #include "../build/assets/test_chambers/test_chamber_00/test_chamber_00.h"
 #include "../build/src/audio/clips.h"
+#include "../build/src/audio/subtitles.h"
 
 struct LandingMenuOption gMainMenuOptions[] = {
-    {"NEW GAME", GameMenuStateNewGame},
-    {"LOAD GAME", GameMenuStateLoadGame},
-    {"OPTIONS", GameMenuStateOptions},
+    {GAMEUI_NEWGAME, GameMenuStateNewGame},
+    {GAMEUI_LOADGAME, GameMenuStateLoadGame},
+    {GAMEUI_OPTIONS, GameMenuStateOptions},
 };
 
 void mainMenuReadCamera(struct GameMenu* gameMenu) {
@@ -24,8 +25,16 @@ void mainMenuReadCamera(struct GameMenu* gameMenu) {
     soundListenerUpdate(&gScene.camera.transform.position, &gScene.camera.transform.rotation, &gZeroVec, 0);
 }
 
+void mainMenuPlayAmbientSound() {
+    static ALSndId soundId = -1;
+    
+    if (soundId == -1 || !soundPlayerIsPlaying(soundId)) {
+        soundId = soundPlayerPlay(SOUNDS_PORTAL_PROCEDURAL_JIGGLE_BONE, 1.0f, 0.5f, NULL, NULL, SoundTypeMusic);
+    }
+}
+
 void mainMenuInit(struct GameMenu* gameMenu) {
-    sceneInitNoPauseMenu(&gScene);
+    sceneInitNoPauseMenu(&gScene, 1);
 
     gameMenuInit(gameMenu, gMainMenuOptions, sizeof(gMainMenuOptions) / sizeof(*gMainMenuOptions), 0);
 
@@ -33,7 +42,7 @@ void mainMenuInit(struct GameMenu* gameMenu) {
 
     gScene.camera.fov = 56.0f;
 
-    soundPlayerPlay(SOUNDS_PORTAL_PROCEDURAL_JIGGLE_BONE, 1.0f, 0.5f, NULL, NULL);
+    mainMenuPlayAmbientSound();
 }
 
 void mainMenuUpdate(struct GameMenu* gameMenu) {
@@ -51,6 +60,8 @@ void mainMenuUpdate(struct GameMenu* gameMenu) {
     sceneAnimatorUpdate(&gScene.animator);
 
     gameMenuUpdate(gameMenu);
+    
+    mainMenuPlayAmbientSound();
 }
 
 extern Lights1 gSceneLights;

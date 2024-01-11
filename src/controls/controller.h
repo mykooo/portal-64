@@ -3,10 +3,9 @@
 
 #include <ultra64.h>
 
-void controllersInit(void);
-void controllersReadPendingData(void);
-void controllersSavePreviousState(void);
-void controllersTriggerRead(void);
+void controllersInit();
+void controllersSavePreviousState();
+void controllersTriggerRead();
 
 enum ControllerDirection {
     ControllerDirectionUp = (1 << 0),
@@ -15,9 +14,7 @@ enum ControllerDirection {
     ControllerDirectionLeft = (1 << 3),
 };
 
-void controllersListen();
 void controllersClearState();
-int controllerHasPendingMessage();
 int controllerIsConnected(int index);
 OSContPad* controllersGetControllerData(int index);
 u16 controllerGetLastButton(int index);

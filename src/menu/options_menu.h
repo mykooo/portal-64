@@ -7,11 +7,15 @@
 #include "./controls.h"
 #include "./audio_options.h"
 #include "./joystick_options.h"
+#include "./gameplay_options.h"
+#include "./video_options.h"
 
 enum OptionsMenuTabs {
     OptionsMenuTabsControlMapping,
     OptionsMenuTabsControlJoystick,
     OptionsMenuTabsAudio,
+    OptionsMenuTabsVideo,
+    OptionsMenuTabsGameplay,
 
     OptionsMenuTabsCount,
 };
@@ -25,10 +29,13 @@ struct OptionsMenu {
     struct ControlsMenu controlsMenu;
     struct JoystickOptions joystickOptions;
     struct AudioOptions audioOptions;
+    struct VideoOptions videoOptions;
+    struct GameplayOptions gameplayOptions;
 };
 
 void optionsMenuInit(struct OptionsMenu* options);
-enum MenuDirection optionsMenuUpdate(struct OptionsMenu* options);
+void optionsMenuRebuildText(struct OptionsMenu* options);
+enum InputCapture optionsMenuUpdate(struct OptionsMenu* options);
 void optionsMenuRender(struct OptionsMenu* options, struct RenderState* renderState, struct GraphicsTask* task);
 
 #endif

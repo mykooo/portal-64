@@ -5,6 +5,7 @@
 #include "../util/rom.h"
 #include "../graphics/image.h"
 #include "../audio/soundplayer.h"
+#include "./text_manipulation.h"
 #include <string.h>
 
 #include "../build/assets/materials/ui.h"
@@ -20,21 +21,27 @@
 #define ROW_HEIGHT      (BORDER_HEIGHT + 8)
 
 void savefileListSlotUseInfo(struct SavefileListSlot* savefileListSlot, struct SavefileInfo* savefileInfo, int x, int y) {
-    char message[16];
-    sprintf(message, "Testchamber %02d", savefileInfo->testchamberIndex);
-    fontRender(&gDejaVuSansFont, message, x + BORDER_WIDTH + 8, y, savefileListSlot->testChamberText);
+    if (savefileListSlot->testChamberText) {
+        menuFreePrerenderedDeferred(savefileListSlot->testChamberText);
+        savefileListSlot->testChamberText = NULL;
+    }
 
     if (savefileListSlot->gameId) {
-        free(savefileListSlot->gameId);
+        menuFreePrerenderedDeferred(savefileListSlot->testChamberText);
+        savefileListSlot->gameId = NULL;
     }
+
+    char message[64];
+    textManipTestChamberMessage(message, savefileInfo->testchamberIndex);
+    savefileListSlot->testChamberText = menuBuildPrerenderedText(&gDejaVuSansFont, message, x + BORDER_WIDTH + 8, y, 120);
 
     if (savefileInfo->savefileName) {
         strcpy(message, savefileInfo->savefileName);
     } else {
-        sprintf(message, "Subject %02d", gSaveData.saveSlotMetadata[savefileInfo->slotIndex].testSubjectNumber);
+        textManipSubjectMessage(message, gSaveData.saveSlotMetadata[savefileInfo->slotIndex].testSubjectNumber);
     }
 
-    savefileListSlot->gameId = menuBuildText(&gDejaVuSansFont, message, x + BORDER_WIDTH + 8, y + 16);
+    savefileListSlot->gameId = menuBuildPrerenderedText(&gDejaVuSansFont, message, x + BORDER_WIDTH + 8, y + savefileListSlot->testChamberText->height + 4, 120);
 
     menuRerenderSolidBorder(
         x, y, 
@@ -51,7 +58,7 @@ void savefileListSlotUseInfo(struct SavefileListSlot* savefileListSlot, struct S
 }
 
 void savefileListSlotInit(struct SavefileListSlot* savefileListSlot, int x, int y) {
-    savefileListSlot->testChamberText = menuBuildText(&gDejaVuSansFont, "Testchamber 00", x + BORDER_WIDTH + 8, y);
+    savefileListSlot->testChamberText = NULL;
     savefileListSlot->gameId = NULL;
     savefileListSlot->border = menuBuildSolidBorder(
         x, y, BORDER_WIDTH, BORDER_HEIGHT,
@@ -125,10 +132,10 @@ void savefileListMenuInit(struct SavefileListMenu* savefileList) {
 
 void savefileUseList(struct SavefileListMenu* savefileList, char* title, struct SavefileInfo* savefileInfo, int slotCount) {
     if (savefileList->savefileListTitleText) {
-        free(savefileList->savefileListTitleText);
+        prerenderedTextFree(savefileList->savefileListTitleText);
     }
     
-    savefileList->savefileListTitleText = menuBuildText(&gDejaVuSansFont, title, 48, LOAD_GAME_TOP + 4);
+    savefileList->savefileListTitleText = menuBuildPrerenderedText(&gDejaVuSansFont, title, 48, LOAD_GAME_TOP + 4, SCREEN_WD);
 
     for (int i = 0; i < slotCount; ++i) {
         savefileList->savefileInfo[i] = savefileInfo[i];
@@ -140,9 +147,9 @@ void savefileUseList(struct SavefileListMenu* savefileList, char* title, struct 
     savefileListMenuSetScroll(savefileList, 0);
 }
 
-enum MenuDirection savefileListUpdate(struct SavefileListMenu* savefileList) {
+enum InputCapture savefileListUpdate(struct SavefileListMenu* savefileList) {
     if (controllerGetButtonDown(0, B_BUTTON)) {
-        return MenuDirectionUp;
+        return InputCaptureExit;
     }
 
     int controllerDir = controllerGetDirectionDown(0);
@@ -152,7 +159,7 @@ enum MenuDirection savefileListUpdate(struct SavefileListMenu* savefileList) {
         if (savefileList->selectedSave == savefileList->numberOfSaves) {
             savefileList->selectedSave = 0;
         }
-        soundPlayerPlay(SOUNDS_BUTTONROLLOVER, 1.0f, 0.5f, NULL, NULL);
+        soundPlayerPlay(SOUNDS_BUTTONROLLOVER, 1.0f, 0.5f, NULL, NULL, SoundTypeAll);
     }
 
     if (controllerDir & ControllerDirectionUp) {
@@ -161,7 +168,7 @@ enum MenuDirection savefileListUpdate(struct SavefileListMenu* savefileList) {
         if (savefileList->selectedSave < 0) {
             savefileList->selectedSave = savefileList->numberOfSaves - 1;
         }
-        soundPlayerPlay(SOUNDS_BUTTONROLLOVER, 1.0f, 0.5f, NULL, NULL);
+        soundPlayerPlay(SOUNDS_BUTTONROLLOVER, 1.0f, 0.5f, NULL, NULL, SoundTypeAll);
     }
 
     int selectTop = SCROLLED_ROW_Y(savefileList->selectedSave, savefileList->scrollOffset) - 8;
@@ -175,7 +182,7 @@ enum MenuDirection savefileListUpdate(struct SavefileListMenu* savefileList) {
         savefileListMenuSetScroll(savefileList, savefileList->scrollOffset + CONTENT_Y - selectTop);
     }
 
-    return MenuDirectionStay;
+    return InputCapturePass;
 }
 
 void savefileListRender(struct SavefileListMenu* savefileList, struct RenderState* renderState, struct GraphicsTask* task) {
@@ -211,17 +218,21 @@ void savefileListRender(struct SavefileListMenu* savefileList, struct RenderStat
     }
     gSPDisplayList(renderState->dl++, ui_material_revert_list[SOLID_ENV_INDEX]);
 
-    gSPDisplayList(renderState->dl++, ui_material_list[DEJAVU_SANS_INDEX]);
-
     gDPPipeSync(renderState->dl++);
     gDPSetScissor(renderState->dl++, G_SC_NON_INTERLACE, 0, 0, SCREEN_WD, SCREEN_HT);
 
+    struct PrerenderedTextBatch* batch = prerenderedBatchStart();
+
     if (savefileList->savefileListTitleText) {
-        gSPDisplayList(renderState->dl++, savefileList->savefileListTitleText);
+        prerenderedBatchAdd(batch, savefileList->savefileListTitleText, NULL);
     }
+
+    renderState->dl = prerenderedBatchFinish(batch, gDejaVuSansImages, renderState->dl);
 
     gDPPipeSync(renderState->dl++);
     gDPSetScissor(renderState->dl++, G_SC_NON_INTERLACE, CONTENT_X, CONTENT_Y, CONTENT_X + CONTENT_WIDTH, CONTENT_Y + CONTENT_HEIGHT);
+
+    batch = prerenderedBatchStart();
 
     for (int i = 0; i < MAX_VISIBLE_SLOTS; ++i) {
         struct SavefileListSlot* slot = &savefileList->slots[i];
@@ -230,14 +241,18 @@ void savefileListRender(struct SavefileListMenu* savefileList, struct RenderStat
             continue;
         }
 
-        gDPPipeSync(renderState->dl++);
-        menuSetRenderColor(renderState, savefileList->indexOffset + i == savefileList->selectedSave, &gSelectionOrange, &gColorWhite);
+        struct Coloru8* color = savefileList->indexOffset + i == savefileList->selectedSave ? &gSelectionOrange : &gColorWhite;
 
-        renderStateInlineBranch(renderState, slot->testChamberText);
-        renderStateInlineBranch(renderState, slot->gameId);
+        prerenderedBatchAdd(batch, slot->testChamberText, color);
+
+        if (slot->gameId) {
+            prerenderedBatchAdd(batch, slot->gameId, color);
+        }
     }
 
-    gSPDisplayList(renderState->dl++, ui_material_revert_list[DEJAVU_SANS_INDEX]);
+    renderState->dl = prerenderedBatchFinish(batch, gDejaVuSansImages, renderState->dl);
+
+    gSPDisplayList(renderState->dl++, ui_material_revert_list[DEJAVU_SANS_0_INDEX]);
 
     gSPDisplayList(renderState->dl++, ui_material_list[IMAGE_COPY_INDEX]);
 

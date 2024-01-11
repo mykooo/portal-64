@@ -4,6 +4,7 @@
 #include "physics/collision_object.h"
 #include "level_definition.h"
 
+#define INTRO_MENU      -4
 #define MAIN_MENU       -3
 #define NO_QUEUED_LEVEL -2
 #define NEXT_LEVEL      -1
@@ -29,6 +30,7 @@ Gfx* levelMaterialRevert(int index);
 int levelQuadIndex(struct CollisionObject* pointer);
 
 int levelGetChamberNumber(int levelIndex, int roomIndex);
+int chamberNumberGetLevel(int chamberIndex);
 
 struct Location* levelGetLocation(short index);
 

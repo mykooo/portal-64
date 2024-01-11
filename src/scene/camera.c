@@ -5,7 +5,9 @@
 #include "../graphics/graphics.h"
 #include "../math/mathf.h"
 
-int isOutsideFrustrum(struct FrustrumCullingInformation* frustrum, struct BoundingBoxs16* boundingBox) {
+enum FrustrumResult isOutsideFrustrum(struct FrustrumCullingInformation* frustrum, struct BoundingBoxs16* boundingBox) {
+    enum FrustrumResult result = FrustrumResultInside;
+
     for (int i = 0; i < frustrum->usedClippingPlaneCount; ++i) {
         struct Vector3 closestPoint;
 
@@ -16,12 +18,24 @@ int isOutsideFrustrum(struct FrustrumCullingInformation* frustrum, struct Boundi
         closestPoint.z = normal->z < 0.0f ? boundingBox->minZ : boundingBox->maxZ;
 
         if (planePointDistance(&frustrum->clippingPlanes[i], &closestPoint) < 0.00001f) {
-            return 1;
+            return FrustrumResultOutisde;
+        }
+
+        if (result == FrustrumResultBoth) {
+            continue;
+        }
+
+        // now check if it is fully contained
+        closestPoint.x = normal->x > 0.0f ? boundingBox->minX : boundingBox->maxX;
+        closestPoint.y = normal->y > 0.0f ? boundingBox->minY : boundingBox->maxY;
+        closestPoint.z = normal->z > 0.0f ? boundingBox->minZ : boundingBox->maxZ;
+        
+        if (planePointDistance(&frustrum->clippingPlanes[i], &closestPoint) < 0.00001f) {
+            result = FrustrumResultBoth;
         }
     }
 
-
-    return 0;
+    return result;
 }
 
 int isSphereOutsideFrustrum(struct FrustrumCullingInformation* frustrum, struct Vector3* scaledCenter, float scaledRadius) {
@@ -140,6 +154,27 @@ error:
     return 0;
 }
 
+void cameraModifyProjectionViewForPortalGun(struct Camera* camera, struct RenderState* renderState, float newNearPlane, float aspectRatio)
+{
+    Mtx* portalGunProjectionView = renderStateRequestMatrices(renderState, 1);
+    if(!portalGunProjectionView)
+        return;
+    
+    struct Camera portalCam = *camera;
+    portalCam.nearPlane = newNearPlane;
+    portalCam.transform.position = gZeroVec;
+    float view[4][4];
+    float projectionView[4][4];
+    unsigned short perspectiveNormalize;
+    cameraBuildProjectionMatrix(&portalCam, projectionView, &perspectiveNormalize, aspectRatio);
+    cameraBuildViewMatrix(&portalCam, view);
+    guMtxCatF(view, projectionView, projectionView);
+    
+    guMtxF2L(projectionView, portalGunProjectionView);
+    gSPMatrix(renderState->dl++, osVirtualToPhysical(portalGunProjectionView), G_MTX_PROJECTION | G_MTX_LOAD | G_MTX_NOPUSH);
+    gSPPerspNormalize(renderState->dl++, perspectiveNormalize);
+}
+
 int cameraApplyMatrices(struct RenderState* renderState, struct CameraMatrixInfo* matrixInfo) {
     Mtx* modelMatrix = renderStateRequestMatrices(renderState, 1);
     
@@ -175,4 +210,16 @@ float cameraClipDistance(struct Camera* camera, float distance) {
     }
 
     return -((camera->nearPlane + camera->farPlane) * modifiedDistance + 2.0f * camera->nearPlane * camera->farPlane) / denom;
+}
+
+int fogIntValue(float floatValue) {
+    if (floatValue < -1.0) {
+        return 0;
+    }
+
+    if (floatValue > 1.0) {
+        return 1000;
+    }
+
+    return (int)((floatValue + 1.0f) * 500.0f);
 }

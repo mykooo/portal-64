@@ -140,6 +140,9 @@ void securityCameraInit(struct SecurityCamera* securityCamera, struct SecurityCa
 }
 
 void securityCameraUpdate(struct SecurityCamera* securityCamera) {
+    if (securityCamera->collisionObject.flags & COLLISION_OBJECT_PLAYER_STANDING) {
+        securityCamera->collisionObject.flags &= ~COLLISION_OBJECT_PLAYER_STANDING;
+    }
     if (decorObjectUpdateFizzler(&securityCamera->collisionObject, &securityCamera->fizzleTime) == FizzleCheckResultEnd) {
         dynamicSceneRemove(securityCamera->dynamicId);
         collisionSceneRemoveDynamicObject(&securityCamera->collisionObject);
@@ -171,7 +174,7 @@ void securityCamerasCheckPortal(struct SecurityCamera* securityCameras, int came
 
             if (!cutsceneRunnerIsChannelPlaying(CH_GLADOS)) {
                 short clipIndex = randomInRange(0, sizeof(gCameraDestroyClips) / sizeof(*gCameraDestroyClips));
-                cutsceneQueueSoundInChannel(gCameraDestroyClips[clipIndex], 1.0f, CH_GLADOS);
+                cutsceneQueueSoundInChannel(gCameraDestroyClips[clipIndex], 1.0f, CH_GLADOS, SubtitleKeyNone);
             }
         }
     }

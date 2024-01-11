@@ -53,18 +53,30 @@ void portalSurfaceCleanupQueueInit() {
 
 struct PortalSurfaceReplacement gPortalSurfaceReplacements[2];
 
-int portalSurfaceAreBothOnSameSurface() {
-    return (gPortalSurfaceReplacements[0].flags & PortalSurfaceReplacementFlagsIsEnabled) != 0 &&
-        (gPortalSurfaceReplacements[1].flags & PortalSurfaceReplacementFlagsIsEnabled) != 0 &&
-        gPortalSurfaceReplacements[0].portalSurfaceIndex == gPortalSurfaceReplacements[1].portalSurfaceIndex;
+
+int portalSurfaceGetSurfaceIndex(int portalIndex) {
+    if (gPortalSurfaceReplacements[portalIndex].flags & PortalSurfaceReplacementFlagsIsEnabled) {
+        return gPortalSurfaceReplacements[portalIndex].portalSurfaceIndex;
+    }
+
+    return -1;
 }
 
-int portalSurfaceShouldSwapOrder(int portalToMove) {
-    if (!portalSurfaceAreBothOnSameSurface()) {
+int portalSurfaceShouldMove(int portalIndex, int portalSurfaceIndex, float portalScale) {
+    struct PortalSurfaceReplacement* replacement = &gPortalSurfaceReplacements[portalIndex];
+
+    int noPortalSurfaceRequested = portalSurfaceIndex == -1;
+    int noPortalSurfacePresent = !(replacement->flags & PortalSurfaceReplacementFlagsIsEnabled);
+
+    if (noPortalSurfaceRequested && noPortalSurfacePresent) {
         return 0;
     }
 
-    return gPortalSurfaceReplacements[1 - portalToMove].previousSurface.shouldCleanup;
+    if (noPortalSurfaceRequested != noPortalSurfacePresent) {
+        return 1;
+    }
+
+    return portalSurfaceIndex != replacement->portalSurfaceIndex || portalScale != replacement->portalScale;
 }
 
 void portalSurfaceReplacementRevert(struct PortalSurfaceReplacement* replacement) {
@@ -76,6 +88,7 @@ void portalSurfaceReplacementRevert(struct PortalSurfaceReplacement* replacement
     portalSurfaceCleanup(&gCurrentLevel->portalSurfaces[replacement->portalSurfaceIndex]);
     gCurrentLevel->portalSurfaces[replacement->portalSurfaceIndex] = replacement->previousSurface;
     replacement->flags = 0;
+    replacement->portalScale = 0.0f;
 }
 
 void portalSurfacePreSwap(int portalToMove) {
@@ -98,7 +111,7 @@ struct PortalSurface* portalSurfaceGetOriginalSurface(int portalSurfaceIndex, in
     }
 }
 
-struct PortalSurface* portalSurfaceReplace(int portalSurfaceIndex, int roomIndex, int portalIndex, struct PortalSurface* with) {
+struct PortalSurface* portalSurfaceReplace(int portalSurfaceIndex, int roomIndex, int portalIndex, float portalScale, struct PortalSurface* with) {
     int staticIndex = -1;
 
     struct PortalSurfaceReplacement* replacement = &gPortalSurfaceReplacements[portalIndex];
@@ -127,6 +140,7 @@ struct PortalSurface* portalSurfaceReplace(int portalSurfaceIndex, int roomIndex
     replacement->staticIndex = staticIndex;
     replacement->portalSurfaceIndex = portalSurfaceIndex;
     replacement->roomIndex = roomIndex;
+    replacement->portalScale = portalScale;
 
     gCurrentLevel->staticContent[staticIndex].displayList = with->triangles;
     gCurrentLevel->portalSurfaces[portalSurfaceIndex] = *with;
@@ -153,6 +167,18 @@ void portalSurfaceInverse(struct PortalSurface* surface, struct Vector2s16* inpu
 int portalSurfaceIsInside(struct PortalSurface* surface, struct Transform* portalAt) {
     int intersectionCount = 0;
 
+    struct Vector3 portalForward;
+    quatMultVector(&portalAt->rotation, &gForward, &portalForward);
+
+    struct Vector3 surfaceNormal;
+    vector3Cross(&surface->up, &surface->right, &surfaceNormal);
+
+    float normal = fabsf(vector3Dot(&portalForward, &surfaceNormal));
+
+    if (normal < 0.7f) {
+        return 0;
+    }
+
     struct Vector2s16 portalPosition;
     portalSurface2DPoint(surface, &portalAt->position, &portalPosition);
 
@@ -160,12 +186,12 @@ int portalSurfaceIsInside(struct PortalSurface* surface, struct Transform* porta
         struct SurfaceEdge* edge = &surface->edges[i];
 
         // only check edges that are one sided
-        if (edge->nextEdgeReverse != NO_EDGE_CONNECTION) {
+        if (edge->reverseEdge != NO_EDGE_CONNECTION) {
             continue;
         }
 
-        struct Vector2s16 a = surface->vertices[edge->aIndex];
-        struct Vector2s16 b = surface->vertices[edge->bIndex];
+        struct Vector2s16 a = surface->vertices[edge->pointIndex];
+        struct Vector2s16 b = surface->vertices[surface->edges[edge->nextEdge].pointIndex];
 
         if ((portalPosition.x - a.x) * (portalPosition.x - b.x) > 0) {
             // edge is to the left or to the right of the portal
@@ -255,12 +281,12 @@ int portalSurfaceAdjustPosition(struct PortalSurface* surface, struct Transform*
             struct SurfaceEdge* edge = &surface->edges[i];
 
             // only check edges that are one sided
-            if (edge->nextEdgeReverse != NO_EDGE_CONNECTION) {
+            if (edge->reverseEdge != NO_EDGE_CONNECTION) {
                 continue;
             }
 
-            struct Vector2s16 a = surface->vertices[edge->aIndex];
-            struct Vector2s16 b = surface->vertices[edge->bIndex];
+            struct Vector2s16 a = surface->vertices[edge->pointIndex];
+            struct Vector2s16 b = surface->vertices[surface->edges[edge->nextEdge].pointIndex];
 
             struct Vector2s16 edgeMin;
             edgeMin.x = MIN(a.x, b.x);

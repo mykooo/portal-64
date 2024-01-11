@@ -3,6 +3,7 @@
 #include "dynamic_scene.h"
 #include "../util/memory.h"
 #include "../physics/collision_scene.h"
+#include "../savefile/savefile.h"
 
 extern struct DynamicScene gDynamicScene;
 
@@ -148,7 +149,7 @@ void dynamicRenderListAddDataTouchingPortal(
         }
 
         float finalTransform[4][4];
-        guMtxCatF(transformAsFloat, list->portalTransforms[1 - touchingPortalIndex], finalTransform);
+        guMtxCatF(transformAsFloat, list->portalTransforms[touchingPortalIndex], finalTransform);
 
         guMtxF2L(finalTransform, mtx);
 
@@ -157,7 +158,7 @@ void dynamicRenderListAddDataTouchingPortal(
 
         next->model = model;
         next->transform = mtx;
-        transformPoint(collisionSceneTransformToPortal(1 - touchingPortalIndex), position, &next->position);
+        transformPoint(collisionSceneTransformToPortal(touchingPortalIndex), position, &next->position);
         next->armature = armature;
         next->materialIndex = materialIndex;
         next->renderStageCullingMask = childCullingMask;
@@ -183,7 +184,7 @@ void dynamicRenderListPopulate(struct DynamicRenderDataList* list, struct Render
                 continue;
             }
 
-            if (stages[stageIndex].currentDepth == STARTING_RENDER_DEPTH && (object->flags & DYNAMIC_SCENE_OBJECT_SKIP_ROOT)) {
+            if (stages[stageIndex].currentDepth == gSaveData.controls.portalRenderDepth && (object->flags & DYNAMIC_SCENE_OBJECT_SKIP_ROOT)) {
                 continue;
             }
 

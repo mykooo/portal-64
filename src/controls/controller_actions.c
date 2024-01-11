@@ -6,20 +6,20 @@
 #include "../savefile/savefile.h"
 
 unsigned char gDefaultControllerSettings[ControllerActionSourceCount] = {
-    [ControllerActionSourceAButton] = ControllerActionJump,
-    [ControllerActionSourceBButton] = ControllerActionUseItem,
+    [ControllerActionSourceAButton] = ControllerActionOpenPortal1,
+    [ControllerActionSourceBButton] = ControllerActionOpenPortal0,
     [ControllerActionSourceCUpButton] = ControllerActionMove,
     [ControllerActionSourceCRightButton] = ControllerActionNone,
     [ControllerActionSourceCDownButton] = ControllerActionNone,
     [ControllerActionSourceCLeftButton] = ControllerActionNone,
-    [ControllerActionSourceDUpButton] = ControllerActionMove,
+    [ControllerActionSourceDUpButton] = ControllerActionLookForward,
     [ControllerActionSourceDRightButton] = ControllerActionNone,
-    [ControllerActionSourceDDownButton] = ControllerActionNone,
+    [ControllerActionSourceDDownButton] = ControllerActionLookBackward,
     [ControllerActionSourceDLeftButton] = ControllerActionNone,
     [ControllerActionSourceStartButton] = ControllerActionPause,
-    [ControllerActionSourceLTrig] = ControllerActionOpenPortal1,
-    [ControllerActionSourceRTrig] = ControllerActionOpenPortal1,
-    [ControllerActionSourceZTrig] = ControllerActionOpenPortal0,
+    [ControllerActionSourceLTrig] = ControllerActionDuck,
+    [ControllerActionSourceRTrig] = ControllerActionUseItem,
+    [ControllerActionSourceZTrig] = ControllerActionJump,
     [ControllerActionSourceJoystick] = ControllerActionRotate,
 };
 
@@ -42,17 +42,28 @@ unsigned short gActionSourceButtonMask[ControllerActionSourceCount] = {
 };
 
 int gActionState = 0;
+int gMutedActions = 0;
 struct Vector2 gDirections[2];
 
+#define ACTION_TO_BITMASK(action)       (1 << (action))
+
 void controllerActionApply(enum ControllerAction action) {
-    gActionState |= (1 << action);
+    gActionState |= ACTION_TO_BITMASK(action);
 }
 
 #define DEADZONE_SIZE       5
 #define MAX_JOYSTICK_RANGE  80
 
+short gDeadzone = DEADZONE_SIZE;
+float gDeadzoneScale = 1.0f / (MAX_JOYSTICK_RANGE - DEADZONE_SIZE);
+
+void controllerSetDeadzone(float percent) {
+    gDeadzone = (short)(percent * MAX_JOYSTICK_RANGE);
+    gDeadzoneScale = 1.0f / (MAX_JOYSTICK_RANGE - gDeadzone);
+}
+
 float controllerCleanupStickInput(s8 input) {
-    if (input > -DEADZONE_SIZE && input < DEADZONE_SIZE) {
+    if (input > -gDeadzone && input < gDeadzone) {
         return 0.0f;
     }
 
@@ -64,7 +75,7 @@ float controllerCleanupStickInput(s8 input) {
         return -1.0f;
     }
 
-    return ((float)input + (input > 0 ? -DEADZONE_SIZE : DEADZONE_SIZE)) * (1.0f / (MAX_JOYSTICK_RANGE - DEADZONE_SIZE));
+    return ((float)input + (input > 0 ? -gDeadzone : gDeadzone)) * gDeadzoneScale;
 }
 
 void controllerActionReadDirection(enum ControllerActionSource source, int controllerIndex, int directionIndex) {
@@ -118,6 +129,8 @@ void controllerActionRead() {
     gDirections[0] = gZeroVec2;
     gDirections[1] = gZeroVec2;
 
+    int nextMutedState = 0;
+
     for (int controllerIndex = 0; controllerIndex < 2; ++controllerIndex) {
         for (int sourceIndex = 0; sourceIndex < ControllerActionSourceCount; ++sourceIndex) {
             enum ControllerAction action = gSaveData.controls.controllerSettings[controllerIndex][sourceIndex];
@@ -127,6 +140,12 @@ void controllerActionRead() {
 
                 if (sourceIndex == ControllerActionSourceCUpButton || sourceIndex == ControllerActionSourceDUpButton) {
                     sourceIndex += 3;
+                }
+            } else if (IS_HOLDABLE_ACTION(action) && controllerGetButton(controllerIndex, gActionSourceButtonMask[sourceIndex])) {
+                if (ACTION_TO_BITMASK(action) & gMutedActions) {
+                    nextMutedState |= ACTION_TO_BITMASK(action);
+                } else {
+                    controllerActionApply(action);
                 }
             } else if (controllerGetButtonDown(controllerIndex, gActionSourceButtonMask[sourceIndex])) {
                 controllerActionApply(action);
@@ -138,6 +157,8 @@ void controllerActionRead() {
         gDirections[i].x = clampf(gDirections[i].x, -1.0f, 1.0f);
         gDirections[i].y = clampf(gDirections[i].y, -1.0f, 1.0f);
     }
+
+    gMutedActions = nextMutedState;
 }
 
 struct Vector2 controllerDirectionGet(enum ControllerAction direction) {
@@ -150,6 +171,10 @@ struct Vector2 controllerDirectionGet(enum ControllerAction direction) {
 
 int controllerActionGet(enum ControllerAction action) {
     return (gActionState & (1 << action)) != 0;
+}
+
+void controllerActionMuteActive() {
+    gMutedActions = gActionState;
 }
 
 int controllerSourcesForAction(enum ControllerAction action, struct ControllerSourceWithController* sources, int maxSources) {

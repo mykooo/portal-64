@@ -3,6 +3,7 @@
 #include "../../build/assets/materials/static.h"
 #include "../../build/src/audio/clips.h"
 #include "../../build/assets/models/dynamic_model_list.h"
+#include "../../build/assets/models/props/light_rail_endcap.h"
 
 #include "../physics/collision_cylinder.h"
 #include "../physics/collision_box.h"
@@ -111,7 +112,112 @@ struct DecorObjectDefinition gDecorObjectDefinitions[] = {
         .materialIndex = AUTOPORTAL_FRAME_INDEX,
         .soundClipId = -1,
         .soundFizzleId = -1,
-    }
+    },
+    [DECOR_TYPE_LIGHT_RAIL_ENDCAP] = {
+        {
+            CollisionShapeTypeNone,
+            NULL,
+            0.0f,
+            0.0f,
+            NULL,  
+        },
+        0.0f, 
+        1.0f,
+        PROPS_LIGHT_RAIL_ENDCAP_DYNAMIC_MODEL,
+        .materialIndex = LIGHT_RAIL_ENDCAP_INDEX,
+        .soundClipId = -1,
+        .soundFizzleId = -1,
+    },
+    [DECOR_TYPE_LAB_MONITOR] = {
+        {
+            CollisionShapeTypeNone,
+            NULL,
+            0.0f,
+            0.0f,
+            NULL,  
+        },
+        0.0f, 
+        1.0f,
+        PROPS_LAB_MONITOR_DYNAMIC_MODEL,
+        .materialIndex = LAB_MONITOR_SCREEN_TEXT_INDEX,
+        .soundClipId = -1,
+        .soundFizzleId = -1,
+    },
+    [DECOR_TYPE_LAB_CHAIR] = {
+        {
+            CollisionShapeTypeNone,
+            NULL,
+            0.0f,
+            0.0f,
+            NULL,  
+        },
+        0.0f, 
+        1.0f,
+        PROPS_LAB_CHAIR_DYNAMIC_MODEL,
+        .materialIndex = DEFAULT_INDEX,
+        .soundClipId = -1,
+        .soundFizzleId = -1,
+    },
+    [DECOR_TYPE_LAB_DESK01] = {
+        {
+            CollisionShapeTypeNone,
+            NULL,
+            0.0f,
+            0.0f,
+            NULL,  
+        },
+        0.0f, 
+        1.0f,
+        PROPS_LAB_DESK_LAB_DESK01_DYNAMIC_MODEL,
+        .materialIndex = DEFAULT_INDEX,
+        .soundClipId = -1,
+        .soundFizzleId = -1,
+    },
+    [DECOR_TYPE_LAB_DESK02] = {
+        {
+            CollisionShapeTypeNone,
+            NULL,
+            0.0f,
+            0.0f,
+            NULL,  
+        },
+        0.0f, 
+        1.0f,
+        PROPS_LAB_DESK_LAB_DESK02_DYNAMIC_MODEL,
+        .materialIndex = DEFAULT_INDEX,
+        .soundClipId = -1,
+        .soundFizzleId = -1,
+    },
+    [DECOR_TYPE_LAB_DESK03] = {
+        {
+            CollisionShapeTypeNone,
+            NULL,
+            0.0f,
+            0.0f,
+            NULL,  
+        },
+        0.0f, 
+        1.0f,
+        PROPS_LAB_DESK_LAB_DESK03_DYNAMIC_MODEL,
+        .materialIndex = DEFAULT_INDEX,
+        .soundClipId = -1,
+        .soundFizzleId = -1,
+    },
+    [DECOR_TYPE_LAB_DESK04] = {
+        {
+            CollisionShapeTypeNone,
+            NULL,
+            0.0f,
+            0.0f,
+            NULL,  
+        },
+        0.0f, 
+        1.0f,
+        PROPS_LAB_DESK_LAB_DESK04_DYNAMIC_MODEL,
+        .materialIndex = DEFAULT_INDEX,
+        .soundClipId = -1,
+        .soundFizzleId = -1,
+    },
 };
 
 struct DecorObjectDefinition* decorObjectDefinitionForId(int id) {

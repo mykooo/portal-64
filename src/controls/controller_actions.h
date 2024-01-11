@@ -46,7 +46,10 @@ enum ControllerAction {
 };
 
 #define IS_DIRECTION_ACTION(action)     ((action) >= ControllerActionMove && (action) <= ControllerActionRotate)
+#define IS_HOLDABLE_ACTION(action)     ((action) >= ControllerActionOpenPortal0 && (action) <= ControllerActionOpenPortal1)
 #define IS_VALID_SOURCE(source) ((source) >= 0 && (source) < ControllerActionSourceCount)
+
+#define MAX_DEADZONE    0.25f
 
 struct ControllerSourceWithController {
     unsigned char button;
@@ -55,8 +58,10 @@ struct ControllerSourceWithController {
 
 void controllerActionRead();
 
+void controllerSetDeadzone(float percent);
 struct Vector2 controllerDirectionGet(enum ControllerAction direction);
 int controllerActionGet(enum ControllerAction action);
+void controllerActionMuteActive();
 
 int controllerSourcesForAction(enum ControllerAction action, struct ControllerSourceWithController* sources, int maxSources);
 

@@ -46,6 +46,7 @@ void sceneSerializePortals(struct Serializer* serializer, SerializeAction action
 
         if (portal->transformIndex != NO_TRANSFORM_INDEX) {
             action(serializer, &portal->relativePos, sizeof(portal->relativePos));
+            action(serializer, &portal->relativeRotation, sizeof(portal->relativeRotation));
         }
     }
 }
@@ -85,6 +86,7 @@ void sceneDeserializePortals(struct Serializer* serializer, struct Scene* scene)
         serializeRead(serializer, &portal->transformIndex, sizeof(portal->transformIndex));
         if (portal->transformIndex != NO_TRANSFORM_INDEX) {
             serializeRead(serializer, &portal->relativePos, sizeof(portal->relativePos));
+            serializeRead(serializer, &portal->relativeRotation, sizeof(portal->relativeRotation));
         }
 
         portal->rigidBody.transform = transform;
@@ -153,6 +155,9 @@ void decorSerialize(struct Serializer* serializer, SerializeAction action, struc
         action(serializer, &entry->rigidBody.angularVelocity, sizeof(struct Vector3));
         action(serializer, &entry->rigidBody.flags, sizeof(enum RigidBodyFlags));
         action(serializer, &entry->rigidBody.currentRoom, sizeof(short));
+
+        entry->rigidBody.flags &= ~RigidBodyIsSleeping;
+        entry->rigidBody.sleepFrames = IDLE_SLEEP_FRAMES;
     }
 }
 
@@ -272,6 +277,9 @@ void boxDropperDeserialize(struct Serializer* serializer, struct Scene* scene) {
         serializeRead(serializer, &dropper->activeCube.rigidBody.angularVelocity, sizeof(struct Vector3));
         serializeRead(serializer, &dropper->activeCube.rigidBody.flags, sizeof(enum RigidBodyFlags));
 
+        dropper->activeCube.rigidBody.flags &= ~RigidBodyIsSleeping;
+        dropper->activeCube.rigidBody.sleepFrames = IDLE_SLEEP_FRAMES;
+
         if (heldCube == i) {
             playerSetGrabbing(&scene->player, &dropper->activeCube.collisionObject);
         }
@@ -379,7 +387,7 @@ void catcherDeserialize(struct Serializer* serializer, struct Scene* scene) {
 
 void sceneAnimatorSerialize(struct Serializer* serializer, SerializeAction action, struct Scene* scene) {
     for (int i = 0; i < scene->animator.animatorCount; ++i) {
-        action(serializer, &scene->animator.playbackSpeeds[i], sizeof(float));
+        action(serializer, &scene->animator.state[i].playbackSpeed, sizeof(float));
 
         struct SKArmature* armature = &scene->animator.armatures[i];
         for (int boneIndex = 0; boneIndex < armature->numberOfBones; ++boneIndex) {
@@ -412,7 +420,7 @@ void switchSerialize(struct Serializer* serializer, SerializeAction action, stru
 
 void sceneAnimatorDeserialize(struct Serializer* serializer, struct Scene* scene) {
     for (int i = 0; i < scene->animator.animatorCount; ++i) {
-        serializeRead(serializer, &scene->animator.playbackSpeeds[i], sizeof(float));
+        serializeRead(serializer, &scene->animator.state[i].playbackSpeed, sizeof(float));
 
         struct SKArmature* armature = &scene->animator.armatures[i];
         for (int boneIndex = 0; boneIndex < armature->numberOfBones; ++boneIndex) {
@@ -501,4 +509,6 @@ void sceneDeserialize(struct Serializer* serializer, struct Scene* scene) {
     for (int i = 0; i < scene->doorCount; ++i) {
         doorCheckForOpenState(&scene->doors[i]);
     }
+
+    scene->hud.fadeInTimer = 0.0f;
 }

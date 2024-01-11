@@ -12,6 +12,7 @@
 #include "portal_render.h"
 #include "../scene/dynamic_scene.h"
 #include "../levels/levels.h"
+#include "../savefile/savefile.h"
 
 #include "../build/assets/models/portal/portal_blue.h"
 #include "../build/assets/models/portal/portal_blue_face.h"
@@ -21,33 +22,8 @@
 #define MIN_VP_WIDTH 64
 #define CAMERA_CLIPPING_RADIUS  0.2f
 #define PORTAL_CLIPPING_OFFSET  0.1f
-
-void renderPropsInit(struct RenderProps* props, struct Camera* camera, float aspectRatio, struct RenderState* renderState, u16 roomIndex) {
-    props->camera = *camera;
-    props->aspectRatio = aspectRatio;
-
-    cameraSetupMatrices(camera, renderState, aspectRatio, &fullscreenViewport, 1, &props->cameraMatrixInfo);
-
-    props->viewport = &fullscreenViewport;
-    props->currentDepth = STARTING_RENDER_DEPTH;
-    props->exitPortalIndex = NO_PORTAL;
-    props->fromRoom = roomIndex;
-    props->parentStageIndex = -1;
-
-    props->clippingPortalIndex = -1;
-
-    props->minX = 0;
-    props->minY = 0;
-    props->maxX = SCREEN_WD;
-    props->maxY = SCREEN_HT;
-
-    props->previousProperties = NULL;
-    props->nextProperites[0] = NULL;
-    props->nextProperites[1] = NULL;
-
-    props->portalRenderType = 0;
-    props->visiblerooms = 0;
-}
+#define ASPECT_SD 1.333333333333333    //  4:3
+#define ASPECT_WIDE 1.777777777777778  // 16:9
 
 void renderPropscheckViewportSize(int* min, int* max, int screenSize) {
     if (*max < MIN_VP_WIDTH) {
@@ -67,12 +43,12 @@ void renderPropscheckViewportSize(int* min, int* max, int screenSize) {
 }
 
 int renderPropsZDistance(int currentDepth) {
-    if (currentDepth >= STARTING_RENDER_DEPTH) {
+    if (currentDepth >= gSaveData.controls.portalRenderDepth) {
         return 0;
     } else if (currentDepth < 0) {
         return G_MAXZ;
     } else {
-        return G_MAXZ - (G_MAXZ >> (STARTING_RENDER_DEPTH - currentDepth));
+        return G_MAXZ - (G_MAXZ >> (gSaveData.controls.portalRenderDepth - currentDepth));
     }
 }
 
@@ -107,8 +83,40 @@ Vp* renderPropsBuildViewport(struct RenderProps* props, struct RenderState* rend
     return viewport;
 }
 
+void renderPropsInit(struct RenderProps* props, struct Camera* camera, float aspectRatio, struct RenderState* renderState, u16 roomIndex) {
+    props->camera = *camera;
+    props->aspectRatio = aspectRatio;
+
+    cameraSetupMatrices(camera, renderState, aspectRatio, &fullscreenViewport, 1, &props->cameraMatrixInfo);
+
+    props->currentDepth = gSaveData.controls.portalRenderDepth;
+    props->exitPortalIndex = NO_PORTAL;
+    props->fromRoom = roomIndex;
+    props->parentStageIndex = -1;
+
+    props->clippingPortalIndex = -1;
+
+    props->minX = 0;
+    props->minY = 0;
+    props->maxX = SCREEN_WD;
+    props->maxY = SCREEN_HT;
+
+    props->viewport = renderPropsBuildViewport(props, renderState);
+
+    props->previousProperties = NULL;
+    props->nextProperites[0] = NULL;
+    props->nextProperites[1] = NULL;
+
+    props->portalRenderType = 0;
+    props->visiblerooms = 0;
+}
+
 void renderPlanFinishView(struct RenderPlan* renderPlan, struct Scene* scene, struct RenderProps* properties, struct RenderState* renderState);
 
+inline static float getAspect()
+{
+    return (gSaveData.controls.flags & ControlSaveWideScreen) != 0 ? ASPECT_WIDE : ASPECT_SD;
+}
 
 #define CALC_SCREEN_SPACE(clip_space, screen_size) ((clip_space + 1.0f) * ((screen_size) / 2))
 
@@ -146,7 +154,7 @@ int renderPlanPortal(struct RenderPlan* renderPlan, struct Scene* scene, struct 
 
     struct ScreenClipper clipper;
 
-    screenClipperInitWithCamera(&clipper, &current->camera, (float)SCREEN_WD / (float)SCREEN_HT, portalTransform);
+    screenClipperInitWithCamera(&clipper, &current->camera, getAspect(), portalTransform);
     struct Box2D clippingBounds;
     screenClipperBoundingPoints(&clipper, gPortalOutline, sizeof(gPortalOutline) / sizeof(*gPortalOutline), &clippingBounds);
 
@@ -259,7 +267,7 @@ int renderPlanPortal(struct RenderPlan* renderPlan, struct Scene* scene, struct 
     struct Vector3 cameraForward;
     quatMultVector(&next->camera.transform.rotation, &gForward, &cameraForward);
 
-    next->camera.nearPlane = (-vector3Dot(&portalOffset, &cameraForward)) * SCENE_SCALE - SCENE_SCALE * PORTAL_COVER_HEIGHT * 0.5f;
+    next->camera.nearPlane = (-vector3Dot(&portalOffset, &cameraForward)) * SCENE_SCALE - SCENE_SCALE * PORTAL_COVER_HEIGHT_RADIUS;
 
     if (next->camera.nearPlane < current->camera.nearPlane) {
         next->camera.nearPlane = current->camera.nearPlane;
@@ -325,6 +333,35 @@ void renderPlanDetermineFarPlane(struct Ray* cameraRay, struct RenderProps* prop
     }
 }
 
+int renderShouldRenderOtherPortal(struct Scene* scene, int visiblePortal, struct RenderProps* properties) {
+    if (!gCollisionScene.portalTransforms[visiblePortal]) {
+        return 0;
+    }
+
+    if ((scene->player.body.flags & (RigidBodyIsTouchingPortalA << visiblePortal)) != 0 && properties->currentDepth == gSaveData.controls.portalRenderDepth) {
+        return 1;
+    }
+
+    struct Portal* portal = &scene->portals[visiblePortal];
+    struct BoundingBoxs16 portalBox;
+    portalBox.minX = (s16)(portal->collisionObject.boundingBox.min.x * SCENE_SCALE);
+    portalBox.minY = (s16)(portal->collisionObject.boundingBox.min.y * SCENE_SCALE);
+    portalBox.minZ = (s16)(portal->collisionObject.boundingBox.min.z * SCENE_SCALE);
+
+    portalBox.maxX = (s16)(portal->collisionObject.boundingBox.max.x * SCENE_SCALE);
+    portalBox.maxY = (s16)(portal->collisionObject.boundingBox.max.y * SCENE_SCALE);
+    portalBox.maxZ = (s16)(portal->collisionObject.boundingBox.max.z * SCENE_SCALE);
+
+    if (isOutsideFrustrum(&properties->cameraMatrixInfo.cullingInformation, &portalBox) == FrustrumResultOutisde) {
+        return 0;
+    }
+
+    struct Vector3 sceneScalePos;
+    vector3Scale(&gCollisionScene.portalTransforms[visiblePortal]->position, &sceneScalePos, SCENE_SCALE);
+
+    return planePointDistance(&properties->cameraMatrixInfo.cullingInformation.clippingPlanes[4], &sceneScalePos) >= -1.0f * SCENE_SCALE;
+}
+
 void renderPlanFinishView(struct RenderPlan* renderPlan, struct Scene* scene, struct RenderProps* properties, struct RenderState* renderState) {
     
     staticRenderDetermineVisibleRooms(&properties->cameraMatrixInfo.cullingInformation, properties->fromRoom, &properties->visiblerooms);
@@ -350,8 +387,8 @@ void renderPlanFinishView(struct RenderPlan* renderPlan, struct Scene* scene, st
     float furthestPortal = 0.0f;
 
     for (int i = 0; i < 2; ++i) {
-        if (gCollisionScene.portalTransforms[closerPortal] && 
-            properties->exitPortalIndex != closerPortal && 
+        if (properties->exitPortalIndex != closerPortal && 
+            renderShouldRenderOtherPortal(scene, closerPortal, properties) &&
             staticRenderIsRoomVisible(properties->visiblerooms, gCollisionScene.portalRooms[closerPortal])) {
             int planResult = renderPlanPortal(
                 renderPlan,
@@ -379,9 +416,9 @@ void renderPlanFinishView(struct RenderPlan* renderPlan, struct Scene* scene, st
 }
 
 void renderPlanAdjustViewportDepth(struct RenderPlan* renderPlan) {
-    float depthWeight[STARTING_RENDER_DEPTH + 1];
+    float depthWeight[gSaveData.controls.portalRenderDepth + 1];
 
-    for (int i = 0; i <= STARTING_RENDER_DEPTH; ++i) {
+    for (int i = 0; i <= gSaveData.controls.portalRenderDepth; ++i) {
         depthWeight[i] = 0.0f;
     }
 
@@ -395,21 +432,21 @@ void renderPlanAdjustViewportDepth(struct RenderPlan* renderPlan) {
 
     float totalWeight = 0.0f;
 
-    for (int i = 0; i <= STARTING_RENDER_DEPTH; ++i) {
+    for (int i = 0; i <= gSaveData.controls.portalRenderDepth; ++i) {
         totalWeight += depthWeight[i];
     }
 
     // give the main view a larger slice of the depth buffer
-    totalWeight += depthWeight[STARTING_RENDER_DEPTH];
-    depthWeight[STARTING_RENDER_DEPTH] *= 2.0f;
+    totalWeight += depthWeight[gSaveData.controls.portalRenderDepth];
+    depthWeight[gSaveData.controls.portalRenderDepth] *= 2.0f;
 
     float scale = (float)G_MAXZ / totalWeight;
 
-    short zBufferBoundary[STARTING_RENDER_DEPTH + 2];
+    short zBufferBoundary[gSaveData.controls.portalRenderDepth + 2];
 
-    zBufferBoundary[STARTING_RENDER_DEPTH + 1] = 0;
+    zBufferBoundary[gSaveData.controls.portalRenderDepth + 1] = 0;
 
-    for (int i = STARTING_RENDER_DEPTH; i >= 0; --i) {
+    for (int i = gSaveData.controls.portalRenderDepth; i >= 0; --i) {
         zBufferBoundary[i] = (short)(scale * depthWeight[i]) + zBufferBoundary[i + 1];
 
         zBufferBoundary[i] = MIN(zBufferBoundary[i], G_MAXZ);
@@ -426,7 +463,7 @@ void renderPlanAdjustViewportDepth(struct RenderPlan* renderPlan) {
 }
 
 void renderPlanBuild(struct RenderPlan* renderPlan, struct Scene* scene, struct RenderState* renderState) {
-    renderPropsInit(&renderPlan->stageProps[0], &scene->camera, (float)SCREEN_WD / (float)SCREEN_HT, renderState, scene->player.body.currentRoom);
+    renderPropsInit(&renderPlan->stageProps[0], &scene->camera, getAspect(), renderState, scene->player.body.currentRoom);
     renderPlan->stageCount = 1;
     renderPlan->clippedPortalIndex = -1;
     renderPlan->nearPolygonCount = 0;
@@ -439,17 +476,7 @@ void renderPlanBuild(struct RenderPlan* renderPlan, struct Scene* scene, struct 
 #define MIN_FOG_DISTANCE 1.0f
 #define MAX_FOG_DISTANCE 2.5f
 
-int fogIntValue(float floatValue) {
-    if (floatValue < -1.0) {
-        return 0;
-    }
-
-    if (floatValue > 1.0) {
-        return 1000;
-    }
-
-    return (int)((floatValue + 1.0f) * 500.0f);
-}
+extern LookAt gLookAt;
 
 void renderPlanExecute(struct RenderPlan* renderPlan, struct Scene* scene, Mtx* staticTransforms, struct RenderState* renderState) {
     struct DynamicRenderDataList* dynamicList = dynamicRenderListNew(renderState, MAX_DYNAMIC_SCENE_OBJECTS);
@@ -486,6 +513,23 @@ void renderPlanExecute(struct RenderPlan* renderPlan, struct Scene* scene, Mtx* 
         
         gSPFogPosition(renderState->dl++, fogMin, fogMax);
 
+        // this lookat calcuation only takes into account 
+        // the direction of the camera. A better approach would
+        // be to take into account the direction towards each
+        // reflective object from the camera. fixing this could
+        // come later
+        LookAt* lookAt = renderStateRequestLookAt(renderState);
+        *lookAt = gLookAt;
+        struct Vector3 cameraForward;
+        quatMultVector(&current->camera.transform.rotation, &gForward, &cameraForward);
+        vector3Negate(&cameraForward, &cameraForward);
+        vector3ToVector3u8(&cameraForward, (struct Vector3u8*)&lookAt->l[0].l.dir);
+
+        quatMultVector(&current->camera.transform.rotation, &gUp, &cameraForward);
+        vector3Negate(&cameraForward, &cameraForward);
+        vector3ToVector3u8(&cameraForward, (struct Vector3u8*)&lookAt->l[1].l.dir);
+        gSPLookAt(renderState->dl++, lookAt);
+
         int portalIndex = (current->portalRenderType & PORTAL_RENDER_TYPE_SECOND_CLOSER) ? 1 : 0;
         
         for (int i = 0; i < 2; ++i) {
@@ -520,7 +564,14 @@ void renderPlanExecute(struct RenderPlan* renderPlan, struct Scene* scene, Mtx* 
                         portalModel = portal_portal_orange_model_gfx;
                     }
 
+                    // render the portal cover with a slightly offset z
+                    // so it doesn't z fight with the surface it is attached to
+                    Vp* vpWithOffset = renderStateRequestViewport(renderState);
+                    *vpWithOffset = *current->viewport;
+                    vpWithOffset->vp.vtrans[2] -= 1;
+                    gSPViewport(renderState->dl++, vpWithOffset);
                     gSPDisplayList(renderState->dl++, faceModel);
+                    gSPViewport(renderState->dl++, current->viewport);
                     if (current->previousProperties == NULL && portalIndex == renderPlan->clippedPortalIndex && renderPlan->nearPolygonCount) {
                         portalRenderScreenCover(renderPlan->nearPolygon, renderPlan->nearPolygonCount, current, renderState);
                     }

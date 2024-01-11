@@ -3,26 +3,25 @@
 
 #include "./menu.h"
 #include "../graphics/graphics.h"
+#include "./menu_builder.h"
 
 enum JoystickOption {
     JoystickOptionInvert,
+    JoystickOptionTankControls,
     JoystickOptionSensitivity,
     JoystickOptionAcceleration,
+    JoystickOptionDeadzone,
     
     JoystickOptionCount,
 };
 
 struct JoystickOptions {
-    struct MenuCheckbox invertControls;
-    struct MenuSlider lookSensitivity;
-    struct MenuSlider lookAcceleration;
-    Gfx* lookSensitivityText;
-    Gfx* lookAccelerationText;
-    short selectedItem;
+    struct MenuBuilder menuBuilder;
 };
 
 void joystickOptionsInit(struct JoystickOptions* joystickOptions);
-enum MenuDirection joystickOptionsUpdate(struct JoystickOptions* joystickOptions);
+void joystickOptionsRebuildText(struct JoystickOptions* joystickOptions);
+enum InputCapture joystickOptionsUpdate(struct JoystickOptions* joystickOptions);
 void joystickOptionsRender(struct JoystickOptions* joystickOptions, struct RenderState* renderState, struct GraphicsTask* task);
 
 #endif

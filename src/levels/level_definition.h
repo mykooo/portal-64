@@ -13,8 +13,22 @@
 
 #define NO_TRANSFORM_INDEX  0xFF
 
+struct StaticContentBox {
+    struct BoundingBoxs16 box;
+    struct Rangeu16 staticRange;
+    short siblingOffset;
+};
+
+struct StaticIndex {
+    struct StaticContentBox* boxIndex;
+    struct BoundingBoxs16* animatedBoxes;
+    struct Rangeu16 animatedRange;
+    short boxCount;
+};
+
 struct StaticContentElement {
     Gfx* displayList;
+    struct Vector3 center;
     u8 materialIndex;
     u8 transformIndex;
 };
@@ -48,12 +62,30 @@ enum CutsceneStepType {
     CutsceneStepSaveCheckpoint,
     CutsceneStepKillPlayer,
     CutsceneStepTypeClosePortal,
+    CutsceneStepShowPrompt,
+    CutsceneStepRumble,
 };
+
+enum CutscenePromptType {
+    CutscenePromptTypeNone,
+    CutscenePromptTypePortal0,
+    CutscenePromptTypePortal1,
+    CutscenePromptTypePickup,
+    CutscenePromptTypeDrop,
+    CutscenePromptTypeUse,
+    CutscenePromptTypeCrouch,
+    CutscenePromptTypeMove,
+    CutscenePromptTypeJump,
+};
+
+
 
 #define CH_NONE    0xFF
 #define CH_GLADOS  0
+#define CH_MUSIC   1
+#define CH_AMBIENT 2
 
-#define CH_COUNT   1
+#define CH_COUNT   3
 
 struct CutsceneStep {
     enum CutsceneStepType type;
@@ -67,6 +99,7 @@ struct CutsceneStep {
         struct {
             u16 soundId;
             u8 channel;
+            u16 subtitleId;
             u8 volume;
         } queueSound;
         struct {
@@ -74,7 +107,8 @@ struct CutsceneStep {
         } waitForChannel;
         struct {
             u16 locationIndex;
-            u16 portalIndex;
+            u8 portalIndex;
+            u8 fromPedestal;
         } openPortal;
         struct {
             u16 portalIndex;
@@ -120,6 +154,12 @@ struct CutsceneStep {
         struct {
             u8 isWater;
         } killPlayer;
+        struct {
+            u8 actionPromptType;
+        } showPrompt;
+        struct {
+            u8 rumbleLevel;
+        } rumble;
         int noop;
     };
 };
@@ -129,10 +169,23 @@ struct Cutscene {
     u16 stepCount;
 };
 
-struct Trigger {
-    struct Box3D box;
+enum ObjectTriggerType {
+    ObjectTriggerTypeNone,
+    ObjectTriggerTypePlayer,
+    ObjectTriggerTypeCube,
+    ObjectTriggerTypeCubeHover,
+};
+
+struct ObjectTriggerInfo {
+    short objectType;
     short cutsceneIndex;
     short signalIndex;
+};
+
+struct Trigger {
+    struct Box3D box;
+    struct ObjectTriggerInfo* triggers;
+    short triggerCount;
 };
 
 struct Location {
@@ -208,10 +261,18 @@ struct BoxDropperDefinition {
     short signalIndex;
 };
 
+enum AnimationSoundType {
+    AnimationSoundTypeNone,
+    AnimationSoundTypeLightRail,
+    AnimationSoundTypePiston,
+    AnimationSoundTypeArm,
+};
+
 struct AnimationInfo {
     struct SKArmatureDefinition armature;
     struct SKAnimationClip* clips;
     short clipCount;
+    short soundType;
 };
 
 struct DynamicBoxDefinition {
@@ -228,6 +289,7 @@ struct BallLauncherDefinition {
     short roomIndex;
     short signalIndex;
     float ballLifetime;
+    float ballVelocity;
 };
 
 struct BallCatcherDefinition {
@@ -241,7 +303,7 @@ struct ClockDefinition {
     struct Vector3 position;
     struct Quaternion rotation;
     short roomIndex;
-    short cutsceneIndex;
+    float duration;
 };
 
 struct SecurityCameraDefinition {
@@ -253,8 +315,10 @@ struct SecurityCameraDefinition {
 struct LevelDefinition {
     struct CollisionObject* collisionQuads;
     struct StaticContentElement *staticContent;
+    struct StaticIndex* roomBvhList;
+    struct Rangeu16 *signalToStaticRanges;
+    u16 *signalToStaticIndices;
     struct Rangeu16 *roomStaticMapping;
-    struct BoundingBoxs16* staticBoundingBoxes;
     struct PortalSurface* portalSurfaces;
     // maps index of a collisionQuads to indices in portalSurfaces
     struct PortalSurfaceMappingRange* portalSurfaceMappingRange;
@@ -282,6 +346,7 @@ struct LevelDefinition {
     struct SecurityCameraDefinition* securityCameras;
     short collisionQuadCount;
     short staticContentCount;
+    short signalToStaticCount;
     short portalSurfaceCount;
     short dynamicBoxCount;
     short triggerCount;

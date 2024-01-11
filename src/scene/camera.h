@@ -33,7 +33,13 @@ struct CameraMatrixInfo {
     struct FrustrumCullingInformation cullingInformation;
 };
 
-int isOutsideFrustrum(struct FrustrumCullingInformation* frustrum, struct BoundingBoxs16* boundingBox);
+enum FrustrumResult {
+    FrustrumResultOutisde,
+    FrustrumResultInside,
+    FrustrumResultBoth,
+};
+
+enum FrustrumResult isOutsideFrustrum(struct FrustrumCullingInformation* frustrum, struct BoundingBoxs16* boundingBox);
 int isSphereOutsideFrustrum(struct FrustrumCullingInformation* frustrum, struct Vector3* scaledCenter, float scaledRadius);
 int isQuadOutsideFrustrum(struct FrustrumCullingInformation* frustrum, struct CollisionQuad* quad);
 
@@ -41,9 +47,12 @@ void cameraInit(struct Camera* camera, float fov, float near, float far);
 void cameraBuildViewMatrix(struct Camera* camera, float matrix[4][4]);
 void cameraBuildProjectionMatrix(struct Camera* camera, float matrix[4][4], u16* perspectiveNorm, float aspectRatio);
 int cameraSetupMatrices(struct Camera* camera, struct RenderState* renderState, float aspectRatio, Vp* viewport, int extractClippingPlanes, struct CameraMatrixInfo* output);
+void cameraModifyProjectionViewForPortalGun(struct Camera* camera, struct RenderState* renderState, float newNearPlane, float aspectRatio);
 
 int cameraApplyMatrices(struct RenderState* renderState, struct CameraMatrixInfo* matrixInfo);
 
 float cameraClipDistance(struct Camera* camera, float distance);
+
+int fogIntValue(float floatValue);
 
 #endif
