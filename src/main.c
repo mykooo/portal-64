@@ -10,6 +10,7 @@
 #include "util/memory.h"
 #include "string.h"
 #include "controls/controller.h"
+#include "scene/dynamic_scene.h"
 
 #include "levels/levels.h"
 
@@ -129,8 +130,9 @@ static void gameProc(void* arg) {
     heapInit(_heapStart, memoryEnd);
     romInit();
 
+    dynamicSceneInit();
     contactSolverInit(&gContactSolver);
-    levelLoadCollisionScene();
+    levelLoad(0);
     sceneInit(&gScene);
     controllersInit();
 #ifdef WITH_DEBUGGER
@@ -158,15 +160,6 @@ static void gameProc(void* arg) {
                 controllersTriggerRead();
                 sceneUpdate(&gScene);
                 timeUpdateDelta();
-
-                char msg[64];
-                sprintf(msg, "current=%x start=%x end=%x dpstat=%x spstat=%x\n",
-                    IO_READ(DPC_CURRENT_REG),					
-                    IO_READ(DPC_START_REG),						
-                    IO_READ(DPC_END_REG),						
-                    IO_READ(DPC_STATUS_REG),					
-                    IO_READ(SP_STATUS_REG));
-
 
                 break;
 

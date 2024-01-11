@@ -5,6 +5,8 @@
 #include <ultra64.h>
 #include "../math/transform.h"
 #include "../math/box3d.h"
+#include "../levels/level_definition.h"
+#include "../scene/camera.h"
 
 enum StaticSceneEntryFlags {
     StaticSceneEntryFlagsHidden,

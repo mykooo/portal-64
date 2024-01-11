@@ -11,6 +11,7 @@ include /usr/include/n64/make/PRdefs
 MIDICVT:=tools/midicvt
 SFZ2N64:=tools/sfz2n64
 SKELATOOL64:=tools/skeletool64
+VTF2PNG:=tools/vtf2png
 
 OPTIMIZER		:= -O0
 LCDEFS			:= -DDEBUG -g -Isrc/ -I/usr/include/n64/nustd -Werror -Wall
@@ -84,6 +85,62 @@ src/models/subject.h src/models/subject_geo.inc.h: assets/fbx/Subject.fbx
 src/models/sphere.h src/models/sphere_geo.inc.h: assets/fbx/Sphere.fbx
 	skeletool64 -s 100 -r 0,0,0 -n sphere -o src/models/sphere.h assets/fbx/Sphere.fbx
 
+
+####################
+## vpk extraction
+####################
+
+portal_pak_dir: vpk/portal_pak_dir.vpk
+	vpk -x portal_pak_dir vpk/portal_pak_dir.vpk
+
+	portal_pak_dir/materials/concrete/concrete_modular_wall001d.png
+
+
+TEXTURE_SCRIPTS = $(shell find assets/ -type f -name '*.ims')
+TEXTURE_IMAGES = $(TEXTURE_SCRIPTS:assets/%.ims=portal_pak_modified/%.png)
+
+%.png: %.vtf
+	$(VTF2PNG) $< $@
+
+portal_pak_modified/%.png: portal_pak_dir/%.png assets/%.ims
+	@mkdir -p $(@D)
+	convert $< $(shell cat $(@:portal_pak_modified/%.png=assets/%.ims)) $@
+
+
+####################
+## Materials
+####################
+
+build/assets/materials/static.h build/assets/materials/static_mat.c: assets/materials/static.skm.yaml $(TEXTURE_IMAGES)
+	@mkdir -p $(@D)
+	$(SKELATOOL64) -n static -m $< -M build/assets/materials/static.h
+
+build/assets/materials/hud.h build/assets/materials/hud_mat.c: assets/materials/hud.skm.yaml $(TEXTURE_IMAGES)
+	@mkdir -p $(@D)
+	$(SKELATOOL64) -n hud -m $< -M build/assets/materials/hud.h
+
+src/levels/level_def_gen.h: build/assets/materials/static.h
+
+build/src/scene/hud.o: build/assets/materials/hud.h
+
+####################
+## Models
+####################
+#
+# Source engine scale is 64x
+#
+
+MODEL_LIST = assets/models/cube/cube.blend \
+	assets/models/portal_gun/v_portalgun.blend
+
+MODEL_HEADERS = $(MODEL_LIST:%.blend=build/%.h)
+MODEL_OBJECTS = $(MODEL_LIST:%.blend=build/%_geo.o)
+
+build/assets/models/%.h build/assets/models/%_geo.c: build/assets/models/%.fbx assets/materials/objects.skm.yaml
+	$(SKELATOOL64) -s 2.56 -n $(<:build/assets/models/%.fbx=%) -m assets/materials/objects.skm.yaml -o $(<:%.fbx=%.h) $<
+
+build/src/models/models.o: $(MODEL_HEADERS)
+
 ####################
 ## Test Chambers
 ####################
@@ -97,10 +154,15 @@ build/%.fbx: %.blend
 	@mkdir -p $(@D)
 	$(BLENDER_2_9) $< --background --python tools/export_fbx.py -- $@
 
-build/assets/test_chambers/%.h build/assets/test_chambers/%_geo.c: build/assets/test_chambers/%.fbx $(SKELATOOL64)
-	$(SKELATOOL64) -l -s 2.56 -c 0.01 -n $(<:build/assets/test_chambers/%.fbx=%) -o $(<:%.fbx=%.h) $<
+build/assets/test_chambers/%.h build/assets/test_chambers/%_geo.c: build/assets/test_chambers/%.fbx $(SKELATOOL64) build/assets/materials/static.h
+	$(SKELATOOL64) -l -s 2.56 -c 0.01 -n $(<:build/assets/test_chambers/%.fbx=%) -m assets/materials/static.skm.yaml -o $(<:%.fbx=%.h) $<
 
-build/assets/test_chambers/%.o: build/assets/test_chambers/%.c
+build/assets/test_chambers/%.o: build/assets/test_chambers/%.c build/assets/materials/static.h
+	@mkdir -p $(@D)
+	$(CC) $(CFLAGS) -MM $^ -MF "$(@:.o=.d)" -MT"$@"
+	$(CC) $(CFLAGS) -c -o $@ $<
+	
+build/assets/materials/%_mat.o: build/assets/materials/%_mat.c
 	@mkdir -p $(@D)
 	$(CC) $(CFLAGS) -MM $^ -MF "$(@:.o=.d)" -MT"$@"
 	$(CC) $(CFLAGS) -c -o $@ $<
@@ -108,11 +170,11 @@ build/assets/test_chambers/%.o: build/assets/test_chambers/%.c
 levels: $(TEST_CHAMBER_HEADERS)
 	echo $(TEST_CHAMBER_HEADERS)
 
-build/assets/test_chambers/level_list.h: $(TEST_CHAMBER_HEADERS)
+build/assets/test_chambers/level_list.h: $(TEST_CHAMBER_HEADERS) tools/generate_level_list.js
 	@mkdir -p $(@D)
 	node tools/generate_level_list.js $@ $(TEST_CHAMBER_HEADERS)
 
-build/src/levels/levels.o: build/assets/test_chambers/level_list.h
+build/src/levels/levels.o: build/assets/test_chambers/level_list.h build/assets/materials/static.h
 
 .PHONY: levels
 
@@ -125,7 +187,7 @@ $(BOOT_OBJ): $(BOOT)
 
 # without debugger
 
-CODEOBJECTS = $(patsubst %.c, build/%.o, $(CODEFILES)) $(TEST_CHAMBER_OBJECTS)
+CODEOBJECTS = $(patsubst %.c, build/%.o, $(CODEFILES)) $(TEST_CHAMBER_OBJECTS) $(MODEL_OBJECTS) build/assets/materials/static_mat.o build/assets/materials/hud_mat.o
 
 CODEOBJECTS_NO_DEBUG = $(CODEOBJECTS)
 
