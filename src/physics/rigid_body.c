@@ -6,6 +6,12 @@
 #include "defs.h"
 #include <math.h>
 
+
+#define VELOCITY_TRHESHOLD      0.00001f
+#define ANGULAR_VELOCITY_THRESHOLD  0.00001f
+
+#define IDLE_SLEEP_FRAMES   ((int)(0.5f / FIXED_DELTA_TIME))
+
 void rigidBodyInit(struct RigidBody* rigidBody, float mass, float momentOfIniteria) {
     transformInitIdentity(&rigidBody->transform);
     rigidBody->velocity = gZeroVec;
@@ -20,6 +26,7 @@ void rigidBodyInit(struct RigidBody* rigidBody, float mass, float momentOfIniter
     rigidBody->flags = 0;
 
     rigidBody->currentRoom = 0;
+    rigidBody->sleepFrames = IDLE_SLEEP_FRAMES;
 
     basisFromQuat(&rigidBody->rotationBasis, &rigidBody->transform.rotation);
 }
@@ -30,6 +37,16 @@ void rigidBodyMarkKinematic(struct RigidBody* rigidBody) {
     rigidBody->massInv = 0.0f;
     rigidBody->momentOfInertia = 1000000000000000.0f;
     rigidBody->momentOfInertiaInv = 0.0f;
+}
+
+void rigidBodyUnmarkKinematic(struct RigidBody* rigidBody, float mass, float momentOfIniteria) {
+    rigidBody->flags &= ~RigidBodyIsKinematic;
+
+    rigidBody->mass = mass;
+    rigidBody->massInv = 1.0f / mass;
+
+    rigidBody->momentOfInertia = momentOfIniteria;
+    rigidBody->momentOfInertiaInv = 1.0f / rigidBody->momentOfInertia;
 }
 
 void rigidBodyAppyImpulse(struct RigidBody* rigidBody, struct Vector3* worldPoint, struct Vector3* impulse) {
@@ -46,6 +63,19 @@ void rigidBodyAppyImpulse(struct RigidBody* rigidBody, struct Vector3* worldPoin
 #define ENERGY_SCALE_PER_STEP   0.99f
 
 void rigidBodyUpdate(struct RigidBody* rigidBody) {
+    // first check if body is ready to sleep
+    if (fabsf(rigidBody->velocity.x) < VELOCITY_TRHESHOLD &&  fabsf(rigidBody->velocity.y) < VELOCITY_TRHESHOLD &&  fabsf(rigidBody->velocity.z) < VELOCITY_TRHESHOLD && 
+        fabsf(rigidBody->angularVelocity.x) < VELOCITY_TRHESHOLD &&  fabsf(rigidBody->angularVelocity.y) < VELOCITY_TRHESHOLD &&  fabsf(rigidBody->angularVelocity.z) < VELOCITY_TRHESHOLD) {
+        --rigidBody->sleepFrames;
+
+        if (rigidBody->sleepFrames == 0) {
+            rigidBody->flags |= RigidBodyIsSleeping;
+            return;
+        }
+    } else {
+        rigidBody->sleepFrames = IDLE_SLEEP_FRAMES;
+    }
+
     if (!(rigidBody->flags & RigidBodyDisableGravity)) {
         rigidBody->velocity.y += GRAVITY_CONSTANT * FIXED_DELTA_TIME;
     }
@@ -82,23 +112,18 @@ float rigidBodyMassInverseAtLocalPoint(struct RigidBody* rigidBody, struct Vecto
     return rigidBody->massInv + rigidBody->momentOfInertiaInv * vector3MagSqrd(&crossPoint);
 }
 
-void rigidBodyClampToPortal(struct RigidBody* rigidBody, struct Transform* portal) {
-    struct Vector3 localPoint;
-
-    transformPointInverseNoScale(portal, &rigidBody->transform.position, &localPoint);
-
+void rigidBodyClampToPortal(struct RigidBody* rigidBody, struct Transform* portal, struct Vector3* localPoint) {
     //clamping the x and y of local point to a slightly smaller oval on the output portal
     struct Vector3 clampedLocalPoint;
-    clampedLocalPoint = localPoint;
-    clampedLocalPoint.y /= 2.0f;
+    clampedLocalPoint.x = localPoint->x;
+    clampedLocalPoint.y = localPoint->y * 0.5f;
     clampedLocalPoint.z = 0.0f;
-    while(sqrtf(vector3MagSqrd(&clampedLocalPoint))>PORTAL_EXIT_XY_CLAMP_DISTANCE){
+    while(vector3MagSqrd(&clampedLocalPoint)>PORTAL_EXIT_XY_CLAMP_DISTANCE*PORTAL_EXIT_XY_CLAMP_DISTANCE){
         vector3Scale(&clampedLocalPoint, &clampedLocalPoint, 0.90f);
     }
-    clampedLocalPoint.y *= 2.0f;
-    localPoint.x = clampedLocalPoint.x;
-    localPoint.y = clampedLocalPoint.y;
-    transformPoint(portal, &localPoint, &rigidBody->transform.position);
+    localPoint->x = clampedLocalPoint.x;
+    localPoint->y = clampedLocalPoint.y * 2.0f;
+    transformPoint(portal, localPoint, &rigidBody->transform.position);
 }
 
 int rigidBodyCheckPortals(struct RigidBody* rigidBody) {
@@ -108,17 +133,7 @@ int rigidBodyCheckPortals(struct RigidBody* rigidBody) {
         return 0;
     }
 
-    struct Vector3 localPoint;
-
     enum RigidBodyFlags newFlags = 0;
-
-    //if only touching one portal, clamp object to edges of that portal
-    if ((rigidBody->flags & RigidBodyIsTouchingPortalA) && !(rigidBody->flags & RigidBodyIsTouchingPortalB)){
-        rigidBodyClampToPortal(rigidBody, gCollisionScene.portalTransforms[0]);
-    }
-    else if ((rigidBody->flags & RigidBodyIsTouchingPortalB) && !(rigidBody->flags & RigidBodyIsTouchingPortalA)){
-        rigidBodyClampToPortal(rigidBody, gCollisionScene.portalTransforms[1]);
-    }
 
     if (rigidBody->flags & RigidBodyIsTouchingPortalA) {
         newFlags |= RigidBodyWasTouchingPortalA;
@@ -131,7 +146,11 @@ int rigidBodyCheckPortals(struct RigidBody* rigidBody) {
     int result = 0;
 
     for (int i = 0; i < 2; ++i) {
-        transformPointInverseNoScale(gCollisionScene.portalTransforms[i], &rigidBody->transform.position, &localPoint);
+        struct Quaternion inverseRotation;
+        quatConjugate(&gCollisionScene.portalTransforms[i]->rotation, &inverseRotation);
+        struct Vector3 localPoint;
+        vector3Sub(&rigidBody->transform.position, &gCollisionScene.portalTransforms[i]->position, &localPoint);
+        quatMultVector(&inverseRotation, &localPoint, &localPoint);
 
         int mask = (RigidBodyFlagsInFrontPortal0 << i);
 
@@ -152,6 +171,14 @@ int rigidBodyCheckPortals(struct RigidBody* rigidBody) {
             (newFlags & RigidBodyFlagsCrossedPortal0)
         ) {
             continue;
+        }
+
+        struct Vector3 localVelocity;
+        quatMultVector(&inverseRotation, &rigidBody->velocity, &localVelocity);
+
+        // if object is moving towards the portal make sure it is within the bounds of it
+        if (vector3Dot(&localVelocity, &localPoint) < 0.0f && !((RigidBodyIsTouchingPortalA << (1 - i)) & rigidBody->flags)) {
+            rigidBodyClampToPortal(rigidBody, gCollisionScene.portalTransforms[i], &localPoint);
         }
 
         // 0 !newFlags & flags
@@ -177,8 +204,24 @@ int rigidBodyCheckPortals(struct RigidBody* rigidBody) {
             vector3Scale(&rigidBody->velocity, &rigidBody->velocity, MAX_PORTAL_SPEED);
         }
 
+        if (speedSqrd < MIN_PORTAL_SPEED * MIN_PORTAL_SPEED) {
+            struct Vector3 portalNormal = gZeroVec;
+            portalNormal.z = i ? -1.0f : 1.0f;
+            quatMultVector(&otherPortal->rotation, &portalNormal, &portalNormal);
+
+            if (portalNormal.y > 0.9f) {
+                if (speedSqrd < 0.000001f) {
+                    vector3Scale(&portalNormal, &rigidBody->velocity, MIN_PORTAL_SPEED);
+                } else {
+                    vector3Normalize(&rigidBody->velocity, &rigidBody->velocity);
+                    vector3Scale(&rigidBody->velocity, &rigidBody->velocity, MIN_PORTAL_SPEED);
+                }
+            }
+        }
+
         newFlags |= RigidBodyFlagsCrossedPortal0 << i;
         newFlags |= RigidBodyIsTouchingPortalA << (1 - i);
+        newFlags &= ~(RigidBodyWasTouchingPortalA << i);
         result = i + 1;
     }
 

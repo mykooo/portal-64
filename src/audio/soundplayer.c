@@ -4,11 +4,13 @@
 #include "util/rom.h"
 #include "util/time.h"
 #include "math/mathf.h"
+#include "clips.h"
 
 struct SoundArray* gSoundClipArray;
 ALSndPlayer gSoundPlayer;
 
-#define MAX_ACTIVE_SOUNDS   16
+#define MAX_SKIPPABLE_SOUNDS    6
+#define MAX_ACTIVE_SOUNDS       12
 
 #define SOUND_FLAGS_3D          (1 << 0)
 #define SOUND_FLAGS_LOOPING     (1 << 1)
@@ -148,7 +150,10 @@ float soundPlayerEstimateLength(ALSound* sound, float speed) {
 }
 
 ALSndId soundPlayerPlay(int soundClipId, float volume, float pitch, struct Vector3* at, struct Vector3* velocity) {
-    if (gActiveSoundCount == MAX_ACTIVE_SOUNDS || soundClipId < 0 || soundClipId >= gSoundClipArray->soundCount) {
+    if (gActiveSoundCount >= MAX_ACTIVE_SOUNDS || soundClipId < 0 || soundClipId >= gSoundClipArray->soundCount) {
+        return SOUND_ID_NONE;
+    }
+    if (gActiveSoundCount >= MAX_SKIPPABLE_SOUNDS && clipsCheckSoundSkippable(soundClipId)) {
         return SOUND_ID_NONE;
     }
     
@@ -193,6 +198,15 @@ ALSndId soundPlayerPlay(int soundClipId, float volume, float pitch, struct Vecto
     ++gActiveSoundCount;
 
     return result;
+}
+
+float soundClipDuration(int soundClipId, float pitch) {
+    if (soundClipId < 0 || soundClipId >= gSoundClipArray->soundCount) {
+        return 0.0f;
+    }
+
+    ALSound* alSound = gSoundClipArray->sounds[soundClipId];
+    return soundPlayerEstimateLength(alSound, pitch);
 }
 
 void soundPlayerUpdate() {
@@ -299,9 +313,15 @@ void soundPlayerAdjustVolume(ALSndId soundId, float newVolume) {
     if (activeSound) {
         if (activeSound->flags & SOUND_FLAGS_3D){
             activeSound->volume = newVolume;
-        }else{
-            alSndpSetSound(&gSoundPlayer, activeSound->soundId);
-            alSndpSetVol(&gSoundPlayer, (short)(32767 * newVolume));
+        } else {
+            short newVolumeInt = (short)(32767 * newVolume);
+            short existingVolume = (short)(32767 * activeSound->volume);
+
+            if (newVolumeInt != existingVolume) {
+                alSndpSetSound(&gSoundPlayer, activeSound->soundId);
+                alSndpSetVol(&gSoundPlayer, newVolumeInt);
+                activeSound->volume = newVolume;
+            }
         }
     }
 }
@@ -319,6 +339,16 @@ int soundPlayerIsPlaying(ALSndId soundId) {
 
     alSndpSetSound(&gSoundPlayer, soundId);
     return activeSound->estimatedTimeLeft > 0.0f && alSndpGetState(&gSoundPlayer) != AL_STOPPED;
+}
+
+float soundPlayerTimeLeft(ALSndId soundId) {
+    struct ActiveSound* activeSound = soundPlayerFindActiveSound(soundId);
+
+    if (!activeSound) {
+        return 0.0f;
+    }
+
+    return activeSound->estimatedTimeLeft;
 }
 
 void soundListenerUpdate(struct Vector3* position, struct Quaternion* rotation, struct Vector3* velocity, int listenerIndex) {

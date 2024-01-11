@@ -4,10 +4,12 @@
 #include "../math/transform.h"
 #include "../math/plane.h"
 #include "../math/vector2s16.h"
+#include "../math/box3d.h"
 #include "../graphics/renderstate.h"
 #include "camera.h"
 #include "static_scene.h"
 #include "./portal_surface.h"
+#include "../physics/collision_object.h"
 
 #define STARTING_RENDER_DEPTH       2
 #define PORTAL_LOOP_SIZE    8
@@ -19,17 +21,23 @@ enum PortalFlags {
 };
 
 struct Portal {
-    struct Transform transform;
+    struct CollisionObject collisionObject;
+    struct RigidBody rigidBody;
+    short dynamicId;
     enum PortalFlags flags;
     float opacity;
     float scale;
     struct Vector2s16 originCentertedLoop[PORTAL_LOOP_SIZE];
     struct Vector2s16 fullSizeLoopCenter;
     short portalSurfaceIndex;
-    short roomIndex;
+    short colliderIndex;
+    // used to attach portals to moving surfaces
     short transformIndex;
     struct Vector3 relativePos;
 };
+
+#define PORTAL_COVER_HEIGHT 0.708084f
+#define PORTAL_COVER_WIDTH  0.84085f
 
 #define NO_PORTAL 0xFF
 
@@ -47,6 +55,8 @@ extern struct Vector3 gPortalOutline[PORTAL_LOOP_SIZE];
 
 void portalInit(struct Portal* portal, enum PortalFlags flags);
 void portalUpdate(struct Portal* portal, int isOpen);
+
+void portalCalculateBB(struct Portal* portal, struct Box3D* bb);
 
 int portalAttachToSurface(struct Portal* portal, struct PortalSurface* surface, int surfaceIndex, struct Transform* portalAt, int just_checking);
 void portalCheckForHoles(struct Portal* portals);

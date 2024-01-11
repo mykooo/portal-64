@@ -7,6 +7,8 @@
 #include "../util/memory.h"
 #include "../savefile/checkpoint.h"
 
+#include <math.h>
+
 struct CutsceneRunner* gRunningCutscenes;
 struct CutsceneRunner* gUnusedRunners;
 u64 gTriggeredCutscenes;
@@ -124,18 +126,6 @@ float cutsceneRunnerConvertPlaybackSpeed(s8 asInt) {
 
 void cutsceneRunnerStartStep(struct CutsceneRunner* runner) {
     struct CutsceneStep* step = &runner->currentCutscene->steps[runner->currentStep];
-    struct CutsceneStep* prev_step;
-    struct CutsceneStep* next_step;
-    enum CutsceneStepType prev_type = -1;
-    enum CutsceneStepType next_type = -1;
-    if (runner->currentStep != 0){
-        prev_step = &runner->currentCutscene->steps[(runner->currentStep)-1];
-        prev_type = prev_step->type;
-    }
-    if (runner->currentStep < runner->currentCutscene->stepCount){
-        next_step = &runner->currentCutscene->steps[(runner->currentStep)+1];
-        next_type = next_step->type;
-    }
     
     switch (step->type) {
         case CutsceneStepTypePlaySound:
@@ -150,13 +140,7 @@ void cutsceneRunnerStartStep(struct CutsceneRunner* runner) {
             break;
         case CutsceneStepTypeQueueSound:
         {
-            if ((prev_type == -1) || !(prev_type == CutsceneStepTypeQueueSound)){
-                cutsceneQueueSound(soundsIntercom[0], step->queueSound.volume * (1.0f / 255.0f), step->queueSound.channel);
-            } 
-            cutsceneQueueSound(step->queueSound.soundId, step->queueSound.volume * (1.0f / 255.0f), step->queueSound.channel);
-            if ((next_type == -1) || !(next_type == CutsceneStepTypeQueueSound)){
-                cutsceneQueueSound(soundsIntercom[1], step->queueSound.volume * (1.0f / 255.0f), step->queueSound.channel);
-            } 
+            cutsceneQueueSoundInChannel(step->queueSound.soundId, step->queueSound.volume * (1.0f / 255.0f), step->queueSound.channel);
             break;
         }
         case CutsceneStepTypeDelay:
@@ -259,6 +243,10 @@ void cutsceneRunnerStartStep(struct CutsceneRunner* runner) {
     }
 }
 
+int cutsceneRunnerIsChannelPlaying(int channel) {
+    return soundPlayerIsPlaying(gCutsceneCurrentSound[channel]) || gCutsceneSoundQueues[channel] != NULL;
+}
+
 int cutsceneRunnerUpdateCurrentStep(struct CutsceneRunner* runner) {
     struct CutsceneStep* step = &runner->currentCutscene->steps[runner->currentStep];
     switch (step->type) {
@@ -266,7 +254,7 @@ int cutsceneRunnerUpdateCurrentStep(struct CutsceneRunner* runner) {
             return !soundPlayerIsPlaying(runner->state.playSound.soundId);
         case CutsceneStepTypeWaitForChannel:
         {
-            int result = !soundPlayerIsPlaying(gCutsceneCurrentSound[step->waitForChannel.channel]) && gCutsceneSoundQueues[step->waitForChannel.channel] == NULL;
+            int result = !cutsceneRunnerIsChannelPlaying(step->waitForChannel.channel);
             return result;
         }
         case CutsceneStepTypeDelay:
@@ -282,6 +270,32 @@ int cutsceneRunnerUpdateCurrentStep(struct CutsceneRunner* runner) {
             return 1;
     }
 }
+
+float cutsceneSoundQueueTime(int channel);
+
+float cutsceneStepEstimateTime(struct CutsceneStep* step, union CutsceneStepState* state) {
+    switch (step->type) {
+        case CutsceneStepTypePlaySound:
+            return state ? soundPlayerTimeLeft(state->playSound.soundId) : soundClipDuration(step->playSound.soundId, step->playSound.pitch * (1.0f / 64.0f));
+        case CutsceneStepTypeQueueSound:
+            return state ? soundPlayerTimeLeft(state->playSound.soundId) : soundClipDuration(step->queueSound.soundId, gCutsceneChannelPitch[step->queueSound.channel]);
+        case CutsceneStepTypeWaitForChannel:
+        {
+            return state ? cutsceneSoundQueueTime(step->waitForChannel.channel) : 0.0f;
+        }
+        case CutsceneStepTypeDelay:
+            return state ? state->delay : step->delay;
+        case CutsceneStepTypeWaitForSignal:
+            return 0.0f;
+        case CutsceneStepTypeWaitForCutscene:
+            return cutsceneEstimateTimeLeft(&gCurrentLevel->cutscenes[step->cutscene.cutsceneIndex]);
+        case CutsceneStepWaitForAnimation:
+            // Maybe todo
+            return 0.0f;
+        default:
+            return 0.0f;
+    }
+} 
 
 void cutsceneRunnerRun(struct CutsceneRunner* runner, struct Cutscene* cutscene) {
     runner->currentCutscene = cutscene;
@@ -352,6 +366,23 @@ int cutsceneIsRunning(struct Cutscene* cutscene) {
     return 0;
 }
 
+float cutsceneSoundQueueTime(int channel) {
+    float result = 0.0f;
+
+    if (soundPlayerIsPlaying(gCutsceneCurrentSound[channel])) {
+        result += soundPlayerTimeLeft(gCutsceneCurrentSound[channel]);
+    }
+
+    struct QueuedSound* curr = gCutsceneSoundQueues[channel];
+
+    while (curr) {
+        result += soundClipDuration(curr->soundId, gCutsceneChannelPitch[channel]);
+        curr = curr->next;
+    }
+
+    return result;
+}
+
 void cutscenesUpdateSounds() {
     for (int i = 0; i < CH_COUNT; ++i) {
         if (!soundPlayerIsPlaying(gCutsceneCurrentSound[i])) {
@@ -364,6 +395,10 @@ void cutscenesUpdateSounds() {
                 curr->next = gCutsceneNextFreeSound;
                 gCutsceneNextFreeSound = curr;
             } else {
+                if (gCutsceneCurrentSound[i] != SOUND_ID_NONE) {
+                    soundPlayerPlay(soundsIntercom[1], 1.0f, gCutsceneChannelPitch[i], NULL, NULL);
+                }
+
                 gCutsceneCurrentSound[i] = SOUND_ID_NONE;
             }
         }
@@ -397,6 +432,30 @@ void cutscenesUpdate() {
     }
 }
 
+float cutsceneRunnerEstimateTimeLeft(struct CutsceneRunner* cutsceneRunner) {
+    float result = 0.0f;
+
+    for (int i = cutsceneRunner->currentStep; i < cutsceneRunner->currentCutscene->stepCount; ++i) {
+        result += cutsceneStepEstimateTime(&cutsceneRunner->currentCutscene->steps[i], i == cutsceneRunner->currentStep ? &cutsceneRunner->state : NULL);
+    }
+
+    return result;
+}
+
+float cutsceneEstimateTimeLeft(struct Cutscene* cutscene) {
+    struct CutsceneRunner* current = gRunningCutscenes;
+
+    while (current) {
+        if (current->currentCutscene == cutscene) {
+            return cutsceneRunnerEstimateTimeLeft(current);
+        }
+
+        current = current->nextRunner;
+    }
+
+
+    return 0.0f;
+}
 
 void cutsceneCheckTriggers(struct Vector3* playerPos) {
     for (int i = 0; i < gCurrentLevel->triggerCount; ++i) {
@@ -511,4 +570,12 @@ void cutsceneSerializeRead(struct Serializer* serializer) {
             serializeRead(serializer, &nextId, sizeof(nextId));
         }
     }
+}
+
+void cutsceneQueueSoundInChannel(int soundId, float volume, int channel) {
+    if (!gCutsceneSoundQueues[channel] && !soundPlayerIsPlaying(gCutsceneCurrentSound[channel])) {
+        cutsceneQueueSound(soundsIntercom[0], volume, channel);
+    }
+
+    cutsceneQueueSound(soundId, volume, channel);
 }

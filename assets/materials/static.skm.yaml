@@ -15,11 +15,24 @@ materials:
       siz: G_IM_SIZ_4b
       twoTone: true
     gSPGeometryMode:
+      set: [G_SHADE]
       clear: [G_LIGHTING]
+    
+    gDPSetCycleType: G_CYC_2CYCLE
+    gDPSetCombineMode: 
+      - color: [PRIMITIVE, "ENVIRONMENT", TEXEL0, "ENVIRONMENT"]
+        alpha: ["0", "0", "0", "1"]
+      - color: ["COMBINED", "0", "SHADE", "0"]
+        alpha: ["0", "0", "0", "1"]
+    gDPSetRenderMode: 
+      - G_RM_PASS
+      - G_RM_ZB_OPA_SURF
 
     properties:
       tileSizeS: 1
       tileSizeT: 2
+
+      staticLit: true
 
   concrete/observationwall_001a:
     gDPSetTile: 
@@ -27,10 +40,11 @@ materials:
       siz: G_IM_SIZ_8b
       fmt: G_IM_FMT_I
 
-    gDPSetCombineMode: G_CC_DECALRGB
+    gDPSetCombineMode: G_CC_MODULATERGB
     gDPSetCycleType: G_CYC_1CYCLE
 
     gSPGeometryMode:
+      set: [G_SHADE]
       clear: [G_LIGHTING]
 
     properties:
@@ -42,8 +56,12 @@ materials:
       filename: ../../portal_pak_modified/materials/metal/metalwall048b.png
       siz: G_IM_SIZ_16b
     
-    gDPSetCombineMode: G_CC_DECALRGB
+    gDPSetCombineMode: G_CC_MODULATERGB
     gDPSetCycleType: G_CYC_1CYCLE
+
+    gSPGeometryMode:
+      set: [G_SHADE]
+      clear: [G_LIGHTING]
 
     properties:
       tileSizeS: 0.5
@@ -82,6 +100,10 @@ materials:
     gDPSetCombineMode: G_CC_DECALRGB
     gDPSetCycleType: G_CYC_1CYCLE
 
+    gSPGeometryMode:
+      set: [G_SHADE]
+      clear: [G_LIGHTING]
+
     properties:
       tileSizeS: 0.5
       tileSizeT: 0.5
@@ -113,7 +135,7 @@ materials:
       filename: ../../portal_pak_modified/materials/metal/metalgrate018.png
       siz: G_IM_SIZ_16b
     
-    gDPSetCombineMode: G_CC_DECALRGBA
+    gDPSetCombineMode: G_CC_MODULATERGBA
     gDPSetCycleType: G_CYC_1CYCLE
     gDPSetAlphaCompare: G_AC_THRESHOLD
     gDPSetRenderMode: G_RM_AA_ZB_TEX_EDGE
@@ -122,6 +144,10 @@ materials:
       g: 255
       b: 255
       a: 128
+
+    gSPGeometryMode:
+      set: [G_SHADE]
+      clear: [G_LIGHTING]
 
     properties:
       tileSizeS: 0.125
@@ -198,8 +224,12 @@ materials:
       filename: ../../portal_pak_modified/materials/signage/hazard_orange_03b.png
       siz: G_IM_SIZ_16b
     
-    gDPSetCombineMode: G_CC_DECALRGB
+    gDPSetCombineMode: G_CC_MODULATERGB
     gDPSetCycleType: G_CYC_1CYCLE
+
+    gSPGeometryMode:
+      set: [G_SHADE]
+      clear: [G_LIGHTING]
 
     properties:
       tileSizeS: 0.5
@@ -211,8 +241,12 @@ materials:
       filename: ../../portal_pak_modified/materials/concrete/concrete_modular_ceiling001a.png
       siz: G_IM_SIZ_16b
 
-    gDPSetCombineMode: G_CC_DECALRGB
+    gDPSetCombineMode: G_CC_MODULATERGB
     gDPSetCycleType: G_CYC_1CYCLE
+
+    gSPGeometryMode:
+      set: [G_SHADE]
+      clear: [G_LIGHTING]
 
     properties:
       tileSizeS: 0.5
@@ -223,8 +257,28 @@ materials:
       filename: ../../portal_pak_modified/materials/concrete/concrete_modular_floor001a.png
       siz: G_IM_SIZ_16b
 
-    gDPSetCombineMode: G_CC_DECALRGB
+    gDPSetCombineMode: G_CC_MODULATERGB
     gDPSetCycleType: G_CYC_1CYCLE
+
+    gSPGeometryMode:
+      set: [G_SHADE]
+      clear: [G_LIGHTING]
+
+    properties:
+      tileSizeS: 0.5
+      tileSizeT: 0.5
+
+  observation_tilefloor001a:
+    gDPSetTile:
+      filename: ../../portal_pak_modified/materials/tile/observation_tilefloor001a.png
+      siz: G_IM_SIZ_16b
+
+    gDPSetCombineMode: G_CC_MODULATERGB
+    gDPSetCycleType: G_CYC_1CYCLE
+
+    gSPGeometryMode:
+      set: [G_SHADE]
+      clear: [G_LIGHTING]
 
     properties:
       tileSizeS: 0.5
@@ -362,7 +416,8 @@ materials:
       g: 230
       b: 230
     gSPGeometryMode:
-      set: [G_LIGHTING, G_SHADE]
+      set: [G_SHADE]
+      clear: [G_LIGHTING]
     gDPSetCombineMode: 
       color: ["SHADE", "0", "PRIMITIVE", "0"]
 
@@ -420,6 +475,55 @@ materials:
       set: [G_LIGHTING, G_SHADE]
     gDPSetCombineMode: 
       color: ["SHADE", "0", "TEXEL0", "0"]
+
+  security_camera:
+    gDPSetTile:
+      filename: ../../portal_pak_modified/materials/models/props/security_camera.png
+      fmt: G_IM_FMT_RGBA
+      siz: G_IM_SIZ_16b
+      s:
+        wrap: false
+      t:
+        wrap: false
+        
+    gSPGeometryMode:
+      set: [G_LIGHTING, G_SHADE]
+    gDPSetCombineMode: 
+      color: ["SHADE", "0", "TEXEL0", "0"]
+
+  security_camera_fizzled:
+    gDPSetTile: 
+      filename: ../../portal_pak_modified/materials/models/props/security_camera.png
+      siz: G_IM_SIZ_16b
+      fmt: G_IM_FMT_RGBA
+      s:
+        wrap: false
+      t:
+        wrap: false
+
+    gDPSetRenderMode: 
+      - blend: ["G_BL_CLR_IN", "G_BL_A_IN", "G_BL_CLR_FOG", "G_BL_1MA"]
+      - G_RM_ZB_XLU_SURF
+
+    gDPSetCycleType: G_CYC_2CYCLE
+    gSPGeometryMode:
+      set: [G_LIGHTING, G_SHADE]
+    gDPSetCombineMode: 
+      - color: ["SHADE", "0", "TEXEL0", "0"]
+        alpha: ["0", "0", "0", "PRIMITIVE"]
+      - color: ["NOISE", "COMBINED", "PRIMITIVE", "COMBINED"]
+        alpha: ["0", "0", "0", "PRIMITIVE"]
+
+    gDPSetFogColor:
+      r: 0
+      g: 0
+      b: 0
+
+    gDPSetPrimColor:
+      r: 100
+      g: 100
+      b: 200
+      a: 128
 
   newsignage_back00:
     gDPSetTile: 
@@ -558,9 +662,13 @@ materials:
       t:
         mirror: true
     
-    gDPSetCombineMode: G_CC_DECALRGB
+    gDPSetCombineMode: G_CC_MODULATERGB
     gDPSetCycleType: G_CYC_1CYCLE
     gDPSetTextureFilter: G_TF_BILERP
+
+    gSPGeometryMode:
+      set: [G_SHADE]
+      clear: [G_LIGHTING]
 
   radio:
     gDPSetTile:
@@ -572,6 +680,36 @@ materials:
       set: [G_LIGHTING, G_SHADE]
     gDPSetCombineMode: 
       color: ["SHADE", "0", "TEXEL0", "0"]
+
+  radio_fizzled:
+    gDPSetTile: 
+      filename: ../../portal_pak_modified/materials/models/props/radio.png
+      siz: G_IM_SIZ_16b
+      fmt: G_IM_FMT_RGBA
+
+    gDPSetRenderMode: 
+      - blend: ["G_BL_CLR_IN", "G_BL_A_IN", "G_BL_CLR_FOG", "G_BL_1MA"]
+      - G_RM_ZB_XLU_SURF
+
+    gDPSetCycleType: G_CYC_2CYCLE
+    gSPGeometryMode:
+      set: [G_LIGHTING, G_SHADE]
+    gDPSetCombineMode: 
+      - color: ["SHADE", "0", "TEXEL0", "0"]
+        alpha: ["0", "0", "0", "PRIMITIVE"]
+      - color: ["NOISE", "COMBINED", "PRIMITIVE", "COMBINED"]
+        alpha: ["0", "0", "0", "PRIMITIVE"]
+
+    gDPSetFogColor:
+      r: 0
+      g: 0
+      b: 0
+
+    gDPSetPrimColor:
+      r: 100
+      g: 100
+      b: 200
+      a: 128
     
 
   portal_cleanser:
@@ -653,6 +791,21 @@ materials:
           wrap: false
         t:
           wrap: false
+  
+  portal_cleanser_wall:
+    gDPSetTile:
+      filename: ../../portal_pak_modified/materials/models/props/portal_cleanser.png
+      fmt: G_IM_FMT_RGBA
+      siz: G_IM_SIZ_16b
+      s:
+        mirror: true
+      t:
+        mirror: true
+        
+    gSPGeometryMode:
+      set: [G_LIGHTING, G_SHADE]
+    gDPSetCombineMode: 
+      color: ["SHADE", "0", "TEXEL0", "0"]
 
   light_rail_beam:
     gDPSetTile:
@@ -752,3 +905,56 @@ materials:
       r: 3
       g: 3
       b: 3
+
+  toilet:
+    gDPSetTile:
+      filename: ../../portal_pak_modified/materials/models/props/toilet.png
+      siz: G_IM_SIZ_16b
+    
+    gDPSetCombineMode: G_CC_MODULATERGB
+    gDPSetCycleType: G_CYC_1CYCLE
+
+    gSPGeometryMode:
+      set: [G_SHADE]
+      clear: [G_LIGHTING]
+
+  bed01:
+    gDPSetTile:
+      filename: ../../portal_pak_modified/materials/models/props/bed01.png
+      siz: G_IM_SIZ_16b
+      s:
+        wrap: false
+      t:
+        wrap: false
+    
+    gDPSetCombineMode: G_CC_MODULATERGB
+    gDPSetCycleType: G_CYC_1CYCLE
+
+    gSPGeometryMode:
+      set: [G_SHADE]
+      clear: [G_LIGHTING]
+
+  bed01_screen:
+    gDPSetTile:
+      filename: ../../portal_pak_modified/materials/models/props/bed01_screen.png
+      siz: G_IM_SIZ_16b
+      s:
+        wrap: false
+      t:
+        wrap: false
+    
+    gDPSetCombineMode: G_CC_MODULATERGB
+    gDPSetCycleType: G_CYC_1CYCLE
+
+    gSPGeometryMode:
+      set: [G_SHADE]
+      clear: [G_LIGHTING]
+
+  clock_digits:
+    gDPSetTile:
+      filename: ./signage/clock_digits.png
+      siz: G_IM_SIZ_4b
+      twoTone: true
+
+    gDPSetCombineMode: G_CC_DECALRGBA
+    gDPSetCycleType: G_CYC_1CYCLE

@@ -17,10 +17,13 @@
 #define NUM_FIELDS      1 
 
 #define LEVEL_SEGMENT 2
+#define DYNAMIC_MODEL_SEGMENT 3
 
 #define DMA_QUEUE_SIZE  200
 
+#ifndef SCENE_SCALE
 #define SCENE_SCALE 256
+#endif
 
 #define MAX_DYNAMIC_OBJECTS     32
 

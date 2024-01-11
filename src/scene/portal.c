@@ -1,6 +1,5 @@
 #include "portal.h"
 
-#include "models/models.h"
 #include "../graphics/screen_clipper.h"
 #include "../graphics/graphics.h"
 #include "../defs.h"
@@ -11,19 +10,24 @@
 #include "../util/time.h"
 #include "../levels/levels.h"
 #include "./portal_surface_generator.h"
+#include "../scene/dynamic_scene.h"
 
 #include "../build/assets/models/portal/portal_blue.h"
 #include "../build/assets/models/portal/portal_blue_filled.h"
 #include "../build/assets/models/portal/portal_blue_face.h"
+#include "../build/assets/models/portal/portal_collider.h"
 #include "../build/assets/models/portal/portal_orange.h"
 #include "../build/assets/models/portal/portal_orange_face.h"
 #include "../build/assets/models/portal/portal_orange_filled.h"
 
+struct ColliderTypeData gPortalColliderType = {
+    CollisionShapeTypeMesh,
+    &portal_portal_collider_collider,
+    0.0f, 0.6f,
+    &gMeshColliderCallbacks
+};
 
 #define CALC_SCREEN_SPACE(clip_space, screen_size) ((clip_space + 1.0f) * ((screen_size) / 2))
-
-#define PORTAL_COVER_HEIGHT 0.708084f
-#define PORTAL_COVER_WIDTH  0.84085f
 
 struct Vector3 gPortalOutline[PORTAL_LOOP_SIZE] = {
     {0.0f, 1.0f * SCENE_SCALE * PORTAL_COVER_HEIGHT, 0},
@@ -42,7 +46,8 @@ struct Vector3 gPortalOutline[PORTAL_LOOP_SIZE] = {
 #define PORTAL_GROW_TIME            0.3f
 
 void portalInit(struct Portal* portal, enum PortalFlags flags) {
-    transformInitIdentity(&portal->transform);
+    collisionObjectInit(&portal->collisionObject, &gPortalColliderType, &portal->rigidBody, 1.0f, COLLISION_LAYERS_STATIC | COLLISION_LAYERS_TANGIBLE);
+    rigidBodyMarkKinematic(&portal->rigidBody);
     portal->flags = flags;
     portal->opacity = 1.0f;
     portal->scale = 0.0f;
@@ -72,6 +77,46 @@ void portalUpdate(struct Portal* portal, int isOpen) {
     }
 }
 
+void portalCalculateBB(struct Portal* portal, struct Box3D* bb) {
+    struct Vector3 portalUp;
+    quatMultVector(&portal->rigidBody.transform.rotation, &gUp, &portalUp);
+    struct Vector3 portalRight;
+    quatMultVector(&portal->rigidBody.transform.rotation, &gRight, &portalRight);
+
+    vector3AddScaled(
+        &portal->rigidBody.transform.position,
+        &portalUp, PORTAL_COVER_HEIGHT * 0.5f,
+        &bb->min
+    );
+
+    bb->max = bb->min;
+
+    struct Vector3 nextPoint;
+    vector3AddScaled(
+        &portal->rigidBody.transform.position,
+        &portalUp, -PORTAL_COVER_HEIGHT * 0.5f,
+        &nextPoint
+    );
+
+    box3DUnionPoint(bb, &nextPoint, bb);
+
+    vector3AddScaled(
+        &portal->rigidBody.transform.position,
+        &portalRight, PORTAL_COVER_WIDTH * 0.25f,
+        &nextPoint
+    );
+
+    box3DUnionPoint(bb, &nextPoint, bb);
+
+    vector3AddScaled(
+        &portal->rigidBody.transform.position,
+        &portalRight, -PORTAL_COVER_WIDTH * 0.25f,
+        &nextPoint
+    );
+
+    box3DUnionPoint(bb, &nextPoint, bb);
+}
+
 int portalAttachToSurface(struct Portal* portal, struct PortalSurface* surface, int surfaceIndex, struct Transform* portalAt, int just_checking) {
     // determine if portal is on surface
     if (!portalSurfaceIsInside(surface, portalAt)) {
@@ -94,6 +139,11 @@ int portalAttachToSurface(struct Portal* portal, struct PortalSurface* surface, 
 
     portal->flags |= PortalFlagsNeedsNewHole;
     portal->fullSizeLoopCenter = correctPosition;
+
+    if (portal->portalSurfaceIndex == -1) {
+        collisionSceneAddDynamicObject(&portal->collisionObject);
+    }    
+
     portal->portalSurfaceIndex = surfaceIndex;
     
     portalSurfaceInverse(surface, &correctPosition, &portalAt->position);
@@ -125,42 +175,30 @@ int portalSurfaceCutNewHole(struct Portal* portal, int portalIndex) {
         return 0;
     }
     
-    portalSurfaceReplace(portal->portalSurfaceIndex, portal->roomIndex, portalIndex, &newSurface);
+    portalSurfaceReplace(portal->portalSurfaceIndex, portal->rigidBody.currentRoom, portalIndex, &newSurface);
 
     return 1;
 }
 
 void portalCheckForHoles(struct Portal* portals) {
-
-    //prevents cutting two holes at the same time on top of eachother (causes crash)
-    if (portalSurfaceAreBothOnSameSurface() && ((portals[0].scale < 1.0f) || (portals[1].scale < 1.0f))){
-        return;
+    if ((portals[1].flags & PortalFlagsNeedsNewHole) != 0 || (
+        portalSurfaceAreBothOnSameSurface() && (portals[0].flags & PortalFlagsNeedsNewHole) != 0
+    )) {
+        portalSurfaceRevert(1);
+        portals[1].flags |= PortalFlagsNeedsNewHole;
     }
 
-    if (((portals[1].flags & PortalFlagsNeedsNewHole) != 0)) {
-        if (portalSurfaceShouldSwapOrder(1)){
-            portalSurfacePreSwap(1);
-            portalSurfaceCutNewHole(&portals[0], 0);
-        }
-        else{
-            portalSurfaceRevert(1);
-            portalSurfaceCutNewHole(&portals[1], 1);
-        }
-        return;
+    if ((portals[0].flags & PortalFlagsNeedsNewHole) != 0) {
+        portalSurfaceRevert(0);
     }
 
-    if (((portals[0].flags & PortalFlagsNeedsNewHole) != 0)){
-        if (portalSurfaceShouldSwapOrder(0)){
-            portalSurfacePreSwap(0);
-            portalSurfaceCutNewHole(&portals[1], 1);   
-        }
-        else{
-            portalSurfaceRevert(0);
-            portalSurfaceCutNewHole(&portals[0], 0);
-        }
-        return;
+    if ((portals[0].flags & PortalFlagsNeedsNewHole) != 0) {
+        portalSurfaceCutNewHole(&portals[0], 0);
     }
 
+    if ((portals[1].flags & PortalFlagsNeedsNewHole) != 0) {
+        portalSurfaceCutNewHole(&portals[1], 1);
+    }
 }
 
 int minkowsiSumAgainstPortal(void* data, struct Vector3* direction, struct Vector3* output) {

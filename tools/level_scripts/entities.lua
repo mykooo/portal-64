@@ -218,6 +218,39 @@ end
 
 sk_definition_writer.add_definition('ball_catchers', 'struct BallCatcherDefinition[]', '_geo', ball_catchers)
 
+local clocks = {}
+
+for _, clock_element in pairs(sk_scene.nodes_for_type('@clock')) do
+    local position, rotation = clock_element.node.full_transformation:decompose()
+
+    local room_index = room_export.node_nearest_room_index(clock_element.node)
+
+    table.insert(clocks, {
+        position,
+        rotation,
+        room_index,
+        trigger.find_cutscene_index(clock_element.arguments[1]),
+    })
+end
+
+sk_definition_writer.add_definition('clocks', 'struct ClockDefinition[]', '_geo', clocks)
+
+local security_cameras = {}
+
+for _, security_camera_element in pairs(sk_scene.nodes_for_type('@security_camera')) do
+    local position, rotation = security_camera_element.node.full_transformation:decompose()
+
+    local room_index = room_export.node_nearest_room_index(security_camera_element.node)
+
+    table.insert(security_cameras, {
+        position,
+        rotation * sk_math.axis_angle(sk_math.vector3(1, 0, 0), math.pi * 0.5),
+        room_index,
+    })
+end
+
+sk_definition_writer.add_definition('security_cameras', 'struct SecurityCameraDefinition[]', '_geo', security_cameras)
+
 return {
     box_droppers = box_droppers,
     buttons = buttons,
@@ -230,4 +263,6 @@ return {
     switches = switches,
     ball_catchers = ball_catchers,
     ball_launchers =  ball_launchers,
+    clocks = clocks,
+    security_cameras = security_cameras,
 }

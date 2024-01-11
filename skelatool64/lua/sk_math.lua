@@ -3,6 +3,8 @@
 local Vector3 = {}
 local Box3 = {}
 local Quaternion = {}
+local Color4 = {}
+local Plane3 = {}
 
 --- creates a new 3d vector
 --- @function vector3
@@ -66,6 +68,32 @@ end
 --- @treturn boolean
 local function isQuaternion(obj)
     return type(obj) == 'table' and type(obj.x) == 'number' and type(obj.y) == 'number' and type(obj.z) == 'number' and type(obj.w) == 'number'
+end
+
+--- creates a new Plane3
+--- @function plane3
+--- @tparam Vector3 normal the normal of the plane
+--- @tparam number d the distance to the origin
+--- @treturn Plane3
+local function plane3(normal, d) 
+    return setmetatable({ normal = normal, d = d }, Plane3)
+end
+
+--- creates a new Plane3 using a point and a normal
+--- @function plane3
+--- @tparam Vector3 normal the normal of the plane
+--- @tparam Vector3 point a point on the plane
+--- @treturn Plane3
+local function plane3_with_point(normal, point) 
+    if not isVector3(normal) then
+        error('plane3_with_point expected vector as first operand got ' .. type(b), 2)
+    end
+
+    if not isVector3(point) then
+        error('plane3_with_point expected vector as second operand got ' .. type(b), 2)
+    end
+
+    return setmetatable({ normal = normal, d = -normal:dot(point) }, Plane3)
 end
 
 --- @type Vector3
@@ -134,6 +162,15 @@ function Vector3.__sub(a, b)
 
     return vector3(a.x - b.x, a.y - b.y, a.z - b.z)
 end
+
+--- @function __unm
+--- @tparam number|Vector3 b
+--- @treturn Vector3
+function Vector3.__unm(a)
+    return vector3(-a.x, -a.y, -a.z)
+end
+
+
 
 --- @function __mul
 --- @tparam number|Vector3 b
@@ -227,6 +264,9 @@ end
 --- @tparam Vector3 b
 --- @treturn number
 function Vector3.dot(a, b)
+    if not isVector3(b) then
+        error('Vector3.dot expected another vector as second operand', 2)
+    end
     return a.x * b.x + a.y * b.y + a.z * b.z
 end
 
@@ -247,6 +287,12 @@ end
 --- @tparam Vector3 b
 --- @treturn Vector3
 function Vector3.lerp(a, b, lerp)
+    if not isVector3(b) then
+        error('Vector3.lerp expected another vector as second operand', 2)
+    end
+    if type(lerp) ~= 'number' then
+        error('Vector3.lerp expected number as third operand', 2)
+    end
     return a * (1 - lerp) + b * lerp
 end
 
@@ -322,6 +368,13 @@ end
 --- @treturn Vector3
 function Box3.lerp(box, lerp)
     return Vector3.lerp(box.min, box.max, lerp)
+end
+
+--- Finds a lerp value, x, such that box:lerp(x) == pos
+--- @function pos
+--- @treturn Vector3
+function Box3.unlerp(box, pos)
+    return (pos - box.min) / (box.max - box.min)
 end
 
 
@@ -416,6 +469,134 @@ function Quaternion.slerp(a, b, t)
     )
 end
 
+--- creates a new 4d color
+--- @function color
+--- @tparam number r
+--- @tparam number g
+--- @tparam number b
+--- @tparam number a
+--- @treturn Color4
+local function color4(r, g, b, a) 
+    return setmetatable({ r = r or 1, g = g or 1, b = b or 1, a = a or 1 }, Color4)
+end
+
+--- determines if the input is a Vector3
+--- @function isColor4
+--- @tparam any obj
+--- @treturn boolean
+local function isColor4(obj)
+    return type(obj) == 'table' and type(obj.r) == 'number' and type(obj.g) == 'number' and type(obj.b) == 'number' and type(obj.a) == 'number'
+end
+
+--- @type Color4
+--- @tfield number r
+--- @tfield number g
+--- @tfield number b
+--- @tfield number a
+Color4.__index = Color4;
+
+
+--- @function __eq
+--- @tparam number|Color4 b
+--- @treturn Color4
+function Color4.__eq(a, b)
+    if (type(a) == 'number') then
+        return a == b.r and a == b.g and a == b.b and a == b.a
+    end
+
+    if (type(b) == 'number') then
+        return a.r == b and a.g == b and a.b + b and a.a == b
+    end
+
+    if (not isColor4(b)) then
+        error('Color4.__eq expected another vector as second operand', 2)
+    end
+
+    return a.r == b.r and a.g == b.g and a.b == b.b and a.a == a.a
+end
+
+--- @function __add
+--- @tparam number|Color4 b
+--- @treturn Color4
+function Color4.__add(a, b)
+    if (type(a) == 'number') then
+        return color4(a + b.r, a + b.g, a + b.b, a + b.a)
+    end
+
+    if (type(b) == 'number') then
+        return color4(a.r + b, a.g + b, a.b + b, a.a + b)
+    end
+
+    if (not isColor4(b)) then
+        error('Color4.__add expected another vector as second operand got ' .. type(b), 2)
+    end
+
+    return color4(a.r + b.r, a.g + b.g, a.b + b.b, a.a + b.a)
+end
+
+--- @function __sub
+--- @tparam number|Color4 b
+--- @treturn Color4
+function Color4.__sub(a, b)
+    if (type(a) == 'number') then
+        return color4(a - b.r, a - b.g, a - b.b, a - b.a)
+    end
+
+    if (type(b) == 'number') then
+        return color4(a.r - b, a.g - b, a.b - b, a.a - b)
+    end
+
+    if (not isColor4(b)) then
+        error('Color4.__sub expected another vector as second operand', 2)
+    end
+
+    if (a == nil) then
+        print(debug.traceback())
+    end
+
+    return color4(a.r - b.r, a.g - b.g, a.b - b.b, a.a - b.a)
+end
+
+--- @function __mul
+--- @tparam number|Color4 b
+--- @treturn Color4
+function Color4.__mul(a, b)
+    if (type(a) == 'number') then
+        return color4(a * b.r, a * b.g, a * b.b, a * b.a)
+    end
+
+    if (type(b) == 'number') then
+        return color4(a.r * b, a.g * b, a.b * b, a.a * b)
+    end
+
+    if (not isColor4(b)) then
+        error('Color4.__mul expected another vector or number as second operand got ' .. type(b), 2)
+    end
+
+    return color4(a.r * b.r, a.g * b.g, a.b * b.b, a.a * b.a)
+end
+
+function Color4.__tostring(v)
+    return 'color4(' .. v.r .. ', ' .. v.g .. ', ' .. v.b .. ', ' .. v.a .. ')'
+end
+
+--- Linearly interpolates between two points
+--- @function lerp
+--- @tparam Color4 b
+--- @treturn Color4
+function Color4.lerp(a, b, lerp)
+    return a * (1 - lerp) + b * lerp
+end
+
+--- @type Plane3
+--- @tfield Vector3 normal
+--- @tfield number d
+Plane3.__index = Plane3;
+
+function Plane3.distance_to_point(plane, point)
+    return plane.normal:dot(point) + plane.d
+end
+
 return {
     vector3 = vector3,
     Vector3 = Vector3,
@@ -426,4 +607,9 @@ return {
     quaternion = quaternion,
     axis_angle = axis_angle,
     isQuaternion = isQuaternion,
+    color4 = color4,
+    isColor4 = isColor4,
+    plane3 = plane3,
+    plane3_with_point = plane3_with_point,
+    Plane3 = Plane3,
 }

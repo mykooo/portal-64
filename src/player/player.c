@@ -7,7 +7,7 @@
 #include "../defs.h"
 #include "../levels/levels.h"
 #include "../math/mathf.h"
-#include "../physics/collision_cylinder.h"
+#include "../physics/collision_sphere.h"
 #include "../physics/collision_scene.h"
 #include "../physics/collision.h"
 #include "../physics/config.h"
@@ -40,45 +40,18 @@ struct Vector3 gPortalGunForward = {0.1f, -0.1f, 1.0f};
 struct Vector3 gPortalGunShootForward = {0.3f, -0.25f, 1.0f};
 struct Vector3 gPortalGunUp = {0.0f, 1.0f, 0.0f};
 
-struct Vector2 gPlayerColliderEdgeVectors[] = {
-    {0.0f, 1.0f},
-    {0.707f, 0.707f},
-    {1.0f, 0.0f},
-    {0.707f, -0.707f},
-};
-
 struct CollisionQuad gPlayerColliderFaces[8];
 
-struct CollisionCylinder gPlayerCollider = {
+struct CollisionSphere gPlayerCollider = {
     0.25f,
-    0.5f,
-    gPlayerColliderEdgeVectors,
-    sizeof(gPlayerColliderEdgeVectors) / sizeof(*gPlayerColliderEdgeVectors),
-    gPlayerColliderFaces,
 };
 
 struct ColliderTypeData gPlayerColliderData = {
-    CollisionShapeTypeCylinder,
+    CollisionShapeTypeSphere,
     &gPlayerCollider,
     0.0f,
     0.6f,
-    &gCollisionCylinderCallbacks,
-};
-
-struct CollisionCylinder gCrouchingPlayerCollider = {
-    0.25f,
-    0.40f,
-    gPlayerColliderEdgeVectors,
-    sizeof(gPlayerColliderEdgeVectors) / sizeof(*gPlayerColliderEdgeVectors),
-    gPlayerColliderFaces,
-};
-
-struct ColliderTypeData gCrouchingPlayerColliderData = {
-    CollisionShapeTypeCylinder,
-    &gCrouchingPlayerCollider,
-    0.0f,
-    0.6f,
-    &gCollisionCylinderCallbacks,
+    &gCollisionSphereCallbacks,
 };
 
 void playerRender(void* data, struct DynamicRenderDataList* renderList, struct RenderState* renderState) {
@@ -465,10 +438,8 @@ void playerGivePortalGun(struct Player* player, int flags) {
 
 void playerUpdateSpeedSound(struct Player* player) {
     float soundPlayerVolume;
-    soundPlayerVolume = PLAYER_SPEED*8 - sqrtf(vector3MagSqrd(&player->body.velocity))*0.70;
-    soundPlayerVolume = clampf(soundPlayerVolume, 0.0, PLAYER_SPEED*8);
-    soundPlayerVolume /= PLAYER_SPEED*8;
-    soundPlayerVolume = 1.0 - soundPlayerVolume;
+    soundPlayerVolume = sqrtf(vector3MagSqrd(&player->body.velocity))*(0.6f / MAX_PORTAL_SPEED);
+    soundPlayerVolume = clampf(soundPlayerVolume, 0.0, 1.0f);
     soundPlayerAdjustVolume(player->flyingSoundLoopId, soundPlayerVolume);
 }
 
@@ -534,6 +505,10 @@ void playerUpdate(struct Player* player) {
     struct Vector3 forward;
     struct Vector3 right;
 
+    if (player->flags & PlayerInCutscene) {
+        return;
+    }
+
     skBlenderUpdate(&player->animator, player->armature.pose, FIXED_DELTA_TIME);
 
     int doorwayMask = worldCheckDoorwaySides(&gCurrentLevel->world, &player->lookTransform.position, player->body.currentRoom);
@@ -566,19 +541,11 @@ void playerUpdate(struct Player* player) {
         if (!(player->flags & PlayerCrouched) && (controllerActionGet(ControllerActionDuck))){
             player->flags |= PlayerCrouched;
             camera_y_modifier = -0.25;
-            collisionSceneRemoveDynamicObject(&player->collisionObject);
-            collisionObjectReInit(&player->collisionObject, &gCrouchingPlayerColliderData, &player->body, 1.0f, PLAYER_COLLISION_LAYERS);
-            collisionSceneAddDynamicObject(&player->collisionObject);
-            collisionObjectUpdateBB(&player->collisionObject);
         }
         //if player crouched, uncrouch
         else if ((player->flags & PlayerCrouched) && (controllerActionGet(ControllerActionDuck))){
             player->flags &= ~PlayerCrouched;
             camera_y_modifier = 0.0;
-            collisionSceneRemoveDynamicObject(&player->collisionObject);
-            collisionObjectReInit(&player->collisionObject, &gPlayerColliderData, &player->body, 1.0f, PLAYER_COLLISION_LAYERS);
-            collisionSceneAddDynamicObject(&player->collisionObject);
-            collisionObjectUpdateBB(&player->collisionObject);
         }
 
         //look straight forward

@@ -82,6 +82,14 @@ void contactSolverManifoldCleanup(struct ContactSolver* contactSolver, struct Co
 	int idMask = ~(1 << (contact - contactSolver->contacts));
 	contact->shapeA->manifoldIds &= idMask;
 	contact->shapeB->manifoldIds &= idMask;
+
+	if (contact->shapeA->body) {
+		contact->shapeA->body->flags &= ~RigidBodyIsSleeping;
+	}
+
+	if (contact->shapeB->body) {
+		contact->shapeB->body->flags &= ~RigidBodyIsSleeping;
+	}
 }
 
 void contactSolverRemoveUnusedContacts(struct ContactSolver* contactSolver) {
@@ -534,6 +542,25 @@ struct ContactManifold* contactSolverNextManifold(struct ContactSolver* solver, 
 	}
 
 	return NULL;
+}
+
+
+float contactPenetration(struct ContactManifold* contact) {
+	float result = 0;
+
+	for (int i = 0; i < contact->contactCount; ++i) {
+		if (contact->contacts[i].penetration > result) {
+			result = contact->contacts[i].penetration;
+		}
+	}
+
+	return result;
+}
+
+void contactAdjustPenetration(struct ContactManifold* contact, float amount) {
+	for (int i = 0; i < contact->contactCount; ++i) {
+		contact->contacts[i].penetration += amount;
+	}
 }
 
 void contactSolverAddPointConstraint(struct ContactSolver* solver, struct PointConstraint* constraint) {

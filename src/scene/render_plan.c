@@ -32,40 +32,9 @@ void renderPropsInit(struct RenderProps* props, struct Camera* camera, float asp
     props->currentDepth = STARTING_RENDER_DEPTH;
     props->exitPortalIndex = NO_PORTAL;
     props->fromRoom = roomIndex;
+    props->parentStageIndex = -1;
 
     props->clippingPortalIndex = -1;
-
-    if (collisionSceneIsPortalOpen()) {
-        for (int i = 0; i < 2; ++i) {
-            struct Vector3 portalOffset;
-
-            vector3Sub(&camera->transform.position, &gCollisionScene.portalTransforms[i]->position, &portalOffset);
-
-            struct Vector3 portalNormal;
-            quatMultVector(&gCollisionScene.portalTransforms[i]->rotation, &gForward, &portalNormal);
-            struct Vector3 projectedPoint;
-
-            if (i == 0) {
-                vector3Negate(&portalNormal, &portalNormal);
-            }
-
-            float clippingDistnace = vector3Dot(&portalNormal, &portalOffset);
-
-            if (fabsf(clippingDistnace) > CAMERA_CLIPPING_RADIUS) {
-                continue;
-            }
-
-            vector3AddScaled(&camera->transform.position, &portalNormal, -clippingDistnace, &projectedPoint);
-
-            if (collisionSceneIsTouchingSinglePortal(&projectedPoint, &portalNormal, gCollisionScene.portalTransforms[i], i)) {
-                planeInitWithNormalAndPoint(&props->cameraMatrixInfo.cullingInformation.clippingPlanes[5], &portalNormal, &gCollisionScene.portalTransforms[i]->position);
-                props->cameraMatrixInfo.cullingInformation.clippingPlanes[5].d = (props->cameraMatrixInfo.cullingInformation.clippingPlanes[5].d + PORTAL_CLIPPING_OFFSET) * SCENE_SCALE;
-                ++props->cameraMatrixInfo.cullingInformation.usedClippingPlaneCount;
-                props->clippingPortalIndex = i;
-                break;
-            }
-        }
-    }
 
     props->minX = 0;
     props->minY = 0;
@@ -153,10 +122,10 @@ int renderPlanPortal(struct RenderPlan* renderPlan, struct Scene* scene, struct 
     }
 
     struct Vector3 worldForward;
-    quatMultVector(&portal->transform.rotation, &forward, &worldForward);
+    quatMultVector(&portal->rigidBody.transform.rotation, &forward, &worldForward);
 
     struct Vector3 offsetFromCamera;
-    vector3Sub(&current->camera.transform.position, &portal->transform.position, &offsetFromCamera);
+    vector3Sub(&current->camera.transform.position, &portal->rigidBody.transform.position, &offsetFromCamera);
 
     // don't render the portal if it is facing the wrong way
     if (vector3Dot(&worldForward, &offsetFromCamera) < 0.0f) {
@@ -270,8 +239,8 @@ int renderPlanPortal(struct RenderPlan* renderPlan, struct Scene* scene, struct 
         return 0;
     }
 
-    struct Transform* fromPortal = &scene->portals[portalIndex].transform;
-    struct Transform* exitPortal = &scene->portals[exitPortalIndex].transform;
+    struct Transform* fromPortal = &scene->portals[portalIndex].rigidBody.transform;
+    struct Transform* exitPortal = &scene->portals[exitPortalIndex].rigidBody.transform;
 
     struct Transform otherInverse;
     transformInvert(fromPortal, &otherInverse);
@@ -290,7 +259,7 @@ int renderPlanPortal(struct RenderPlan* renderPlan, struct Scene* scene, struct 
     struct Vector3 cameraForward;
     quatMultVector(&next->camera.transform.rotation, &gForward, &cameraForward);
 
-    next->camera.nearPlane = (-vector3Dot(&portalOffset, &cameraForward)) * SCENE_SCALE;
+    next->camera.nearPlane = (-vector3Dot(&portalOffset, &cameraForward)) * SCENE_SCALE - SCENE_SCALE * PORTAL_COVER_HEIGHT * 0.5f;
 
     if (next->camera.nearPlane < current->camera.nearPlane) {
         next->camera.nearPlane = current->camera.nearPlane;
@@ -311,18 +280,18 @@ int renderPlanPortal(struct RenderPlan* renderPlan, struct Scene* scene, struct 
         return flags;
     }
 
-    if (current->clippingPortalIndex == -1) {
-        // set the near clipping plane to be the exit portal surface
-        quatMultVector(&exitPortal->rotation, &gForward, &next->cameraMatrixInfo.cullingInformation.clippingPlanes[4].normal);
-        if (portalIndex == 1) {
-            vector3Negate(&next->cameraMatrixInfo.cullingInformation.clippingPlanes[4].normal, &next->cameraMatrixInfo.cullingInformation.clippingPlanes[4].normal);
-        }
-        next->cameraMatrixInfo.cullingInformation.clippingPlanes[4].d = -vector3Dot(&next->cameraMatrixInfo.cullingInformation.clippingPlanes[4].normal, &exitPortal->position) * SCENE_SCALE;
+    // set the near clipping plane to be the exit portal surface
+    quatMultVector(&exitPortal->rotation, &gForward, &next->cameraMatrixInfo.cullingInformation.clippingPlanes[4].normal);
+    if (portalIndex == 1) {
+        vector3Negate(&next->cameraMatrixInfo.cullingInformation.clippingPlanes[4].normal, &next->cameraMatrixInfo.cullingInformation.clippingPlanes[4].normal);
     }
+    next->cameraMatrixInfo.cullingInformation.clippingPlanes[4].d = -(vector3Dot(&next->cameraMatrixInfo.cullingInformation.clippingPlanes[4].normal, &exitPortal->position) + 0.01f) * SCENE_SCALE;
+
     next->clippingPortalIndex = -1;
 
     next->exitPortalIndex = exitPortalIndex;
     next->fromRoom = gCollisionScene.portalRooms[next->exitPortalIndex];
+    next->parentStageIndex = current - renderPlan->stageProps;
 
     ++renderPlan->stageCount;
 
@@ -369,7 +338,7 @@ void renderPlanFinishView(struct RenderPlan* renderPlan, struct Scene* scene, st
 
     cameraSetupMatrices(&properties->camera, renderState, properties->aspectRatio, properties->viewport, 0, &properties->cameraMatrixInfo);
 
-    int closerPortal = vector3DistSqrd(&properties->camera.transform.position, &scene->portals[0].transform.position) < vector3DistSqrd(&properties->camera.transform.position, &scene->portals[1].transform.position) ? 0 : 1;
+    int closerPortal = vector3DistSqrd(&properties->camera.transform.position, &scene->portals[0].rigidBody.transform.position) < vector3DistSqrd(&properties->camera.transform.position, &scene->portals[1].rigidBody.transform.position) ? 0 : 1;
     int otherPortal = 1 - closerPortal;
     
     if (closerPortal) {
@@ -483,7 +452,11 @@ int fogIntValue(float floatValue) {
 }
 
 void renderPlanExecute(struct RenderPlan* renderPlan, struct Scene* scene, Mtx* staticTransforms, struct RenderState* renderState) {
-    struct DynamicRenderDataList* dynamicList = dynamicRenderListNew(MAX_DYNAMIC_SCENE_OBJECTS);
+    struct DynamicRenderDataList* dynamicList = dynamicRenderListNew(renderState, MAX_DYNAMIC_SCENE_OBJECTS);
+
+    for (int i = 0; i < renderPlan->stageCount; ++i) {
+        dynamicRenderAddStage(dynamicList, renderPlan->stageProps[i].exitPortalIndex, renderPlan->stageProps[i].parentStageIndex);
+    }
 
     dynamicRenderListPopulate(dynamicList, renderPlan->stageProps, renderPlan->stageCount, renderState);
 

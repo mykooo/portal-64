@@ -87,6 +87,8 @@ struct LevelDefinition* levelFixPointers(struct LevelDefinition* from, int point
     result->dynamicBoxes = ADJUST_POINTER_POS(result->dynamicBoxes, pointerOffset);
     result->ballLaunchers = ADJUST_POINTER_POS(result->ballLaunchers, pointerOffset);
     result->ballCatchers = ADJUST_POINTER_POS(result->ballCatchers, pointerOffset);
+    result->clocks = ADJUST_POINTER_POS(result->clocks, pointerOffset);
+    result->securityCameras = ADJUST_POINTER_POS(result->securityCameras, pointerOffset);
 
     result->animations = ADJUST_POINTER_POS(result->animations, pointerOffset);
 
@@ -204,4 +206,42 @@ struct Location* levelGetLocation(short index) {
     }
 
     return &gCurrentLevel->locations[index];
+}
+
+int levelGetChamberNumber(int levelIndex, int roomIndex){
+    switch(levelIndex){
+        case 0:
+            if (roomIndex <= 2)
+                return 0;
+            else
+                return 1;
+        case 1:
+            if (roomIndex <= 2)
+                return 2;
+            else
+                return 3;
+        case 2:
+            if (roomIndex <= 2)
+                return 4;
+            else
+                return 5;
+        case 3:
+            if (roomIndex <= 2)
+                return 6;
+            else
+                return 7;
+        case 4:
+            return 8;
+        case 5:
+            return 9;
+        case 6:
+            return 10;
+        case 7:
+            if (roomIndex <= 2)
+                return 11;
+            else
+                return 12;
+        default:
+            return 0;
+    }
 }

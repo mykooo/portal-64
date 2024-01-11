@@ -2,6 +2,8 @@
 
 #include "LuaMesh.h"
 
+#include <iomanip>
+
 #include "../definition_generator/MeshDefinitionGenerator.h"
 #include "../definition_generator/MaterialGenerator.h"
 #include "./LuaBasicTypes.h"
@@ -13,8 +15,9 @@
 #include "./LuaTransform.h"
 #include "./LuaUtils.h"
 
+template <typename T>
 int luaGetVector3ArrayElement(lua_State* L) {
-    struct aiVector3DArray* array = (struct aiVector3DArray*)luaL_checkudata(L, 1, "aiVector3DArray");
+    struct LazyVectorWithLength<T>* array = (struct LazyVectorWithLength<T>*)luaL_checkudata(L, 1, luaGetVectorName<T>().c_str());
     int index = luaL_checkinteger(L, 2);
 
     if (index <= 0 || index > array->length) {
@@ -27,13 +30,14 @@ int luaGetVector3ArrayElement(lua_State* L) {
     return 1;
 }
 
+template <typename T>
 int luaSetVector3ArrayElement(lua_State* L) {
     lua_settop(L, 3);
     
-    aiVector3D value;
+    T value;
     fromLua(L, value);
 
-    struct aiVector3DArray* array = (struct aiVector3DArray*)luaL_checkudata(L, 1, "aiVector3DArray");
+    struct LazyVectorWithLength<T>* array = (struct LazyVectorWithLength<T>*)luaL_checkudata(L, 1, luaGetVectorName<T>().c_str());
     int index = luaL_checkinteger(L, 2);
 
     if (index <= 0 || index > array->length) {
@@ -45,14 +49,16 @@ int luaSetVector3ArrayElement(lua_State* L) {
     return 0;
 }
 
+template <typename T>
 int luaGetVector3ArrayLength(lua_State* L) {
-    struct aiVector3DArray* array = (struct aiVector3DArray*)luaL_checkudata(L, 1, "aiVector3DArray");
+    struct LazyVectorWithLength<T>* array = (struct LazyVectorWithLength<T>*)luaL_checkudata(L, 1, luaGetVectorName<T>().c_str());
     lua_pushinteger(L, array->length);
     return 1;
 }
 
+template <typename T>
 int luaVector3ArrayNext(lua_State* L) {
-    struct aiVector3DArray* array = (struct aiVector3DArray*)luaL_checkudata(L, 1, "aiVector3DArray");
+    struct LazyVectorWithLength<T>* array = (struct LazyVectorWithLength<T>*)luaL_checkudata(L, 1, luaGetVectorName<T>().c_str());
 
     if (lua_isnil(L, 2)) {
         if (array->length) {
@@ -82,45 +88,168 @@ int luaVector3ArrayNext(lua_State* L) {
     return 1;
 }
 
+template <typename T>
 int luaVector3ArrayPairs(lua_State* L) {
-    lua_pushcfunction(L, luaVector3ArrayNext);
+    lua_pushcfunction(L, luaVector3ArrayNext<T>);
     lua_pushnil(L);
     lua_copy(L, 1, -1);
     lua_pushnil(L);
     return 3;
 }
 
-void toLuaLazyArray(lua_State* L, aiVector3D* vertices, unsigned count) {
-    struct aiVector3DArray* result = (struct aiVector3DArray*)lua_newuserdata(L, sizeof(struct aiVector3DArray));
+template <typename T>
+void toLuaLazyArray(lua_State* L, T* vertices, unsigned count) {
+    struct LazyVectorWithLength<T>* result = (struct LazyVectorWithLength<T>*)lua_newuserdata(L, sizeof(struct LazyVectorWithLength<T>));
 
     result->vertices = vertices;
     result->length = count;
 
-    if(luaL_newmetatable(L, "aiVector3DArray")) {
-        lua_pushcfunction(L, luaGetVector3ArrayElement);
+    if(luaL_newmetatable(L, luaGetVectorName<T>().c_str())) {
+        lua_pushcfunction(L, luaGetVector3ArrayElement<T>);
         lua_setfield(L, -2, "__index");
 
-        lua_pushcfunction(L, luaSetVector3ArrayElement);
+        lua_pushcfunction(L, luaSetVector3ArrayElement<T>);
         lua_setfield(L, -2, "__newindex");
 
-        lua_pushcfunction(L, luaGetVector3ArrayLength);
+        lua_pushcfunction(L, luaGetVector3ArrayLength<T>);
         lua_setfield(L, -2, "__len");
 
-        lua_pushcfunction(L, luaVector3ArrayPairs);
+        lua_pushcfunction(L, luaVector3ArrayPairs<T>);
         lua_setfield(L, -2, "__pairs");
     }
 
     lua_setmetatable(L, -2);
 }
 
-bool luaIsLazyVector3DArray(lua_State* L, int index) {
-    return luaL_testudata(L, index, "aiVector3DArray");
+void textureFromLua(lua_State* L, std::shared_ptr<TextureDefinition>& texture) {
+    lua_getfield(L, -1, "ptr");
+
+    fromLua(L, texture);
+    lua_pop(L, 1);
+}
+
+void textureToLua(lua_State* L, std::shared_ptr<TextureDefinition> texture);
+
+int luaTextureCrop(lua_State* L) {
+    int x = luaL_checkinteger(L, 2);
+    int y = luaL_checkinteger(L, 3);
+    int w = luaL_checkinteger(L, 4);
+    int h = luaL_checkinteger(L, 5);
+
+    lua_settop(L, 1);
+
+    std::shared_ptr<TextureDefinition> texture;
+    textureFromLua(L, texture);
+
+    std::shared_ptr<TextureDefinition> result = texture->Crop(x, y, w, h);
+    textureToLua(L, result);
+    return 1;
+}
+
+int luaTextureResize(lua_State* L) {
+    int w = luaL_checkinteger(L, 2);
+    int h = luaL_checkinteger(L, 3);
+
+    lua_settop(L, 1);
+
+    std::shared_ptr<TextureDefinition> texture;
+    textureFromLua(L, texture);
+
+    std::shared_ptr<TextureDefinition> result = texture->Resize(w, h);
+    textureToLua(L, result);
+
+    return 1;
+}
+
+int luaTextureData(lua_State* L) {
+    lua_settop(L, 1);
+
+    if (lua_isnil(L, 1)) {
+        lua_pushstring(L, "call to get_data had nil as the first paramter");
+        lua_error(L);
+        return 0;
+    }
+
+    std::shared_ptr<TextureDefinition> texture;
+    textureFromLua(L, texture);
+
+    if (!texture) {
+        return 0;
+    }
+
+    const std::vector<unsigned long long>& data = texture->GetData();
+    
+    lua_createtable(L, data.size(), 0);
+
+    for (unsigned i = 0; i < data.size(); ++i) {
+        std::ostringstream stream;
+        stream << "0x" << std::hex << std::setw(16) << std::setfill('0') << data[i];
+        luaLoadModuleFunction(L, "sk_definition_writer", "raw");
+        lua_pushstring(L, stream.str().c_str());
+        lua_call(L, 1, 1);
+        lua_seti(L, -2, i + 1);
+    }
+
+    return 1;
+}
+
+/**
+@table Texture
+@tfield number width
+@tfield number height
+@tfield string name
+@tfield function get_data
+@tfield function crop
+*/
+
+void textureToLua(lua_State* L, std::shared_ptr<TextureDefinition> texture) {
+    if (!texture) {
+        lua_pushnil(L);
+        return;
+    }
+
+    lua_createtable(L, 0, 0);
+
+    luaLoadModuleFunction(L, "sk_mesh", "Texture");
+    lua_setmetatable(L, -2);
+
+    toLua(L, texture);
+    lua_setfield(L, -2, "ptr");
+
+    lua_pushinteger(L, texture->Width());
+    lua_setfield(L, -2, "width");
+
+    lua_pushinteger(L, texture->Height());
+    lua_setfield(L, -2, "height");
+
+    lua_pushstring(L, texture->Name().c_str());
+    lua_setfield(L, -2, "name");
+}
+
+/**
+@table TileState
+@tfield string format
+@tfield string size
+@tfield Texture texture 
+*/
+void toLua(lua_State* L, TileState& tileState) {
+    lua_createtable(L, 0, 0);
+
+    lua_pushstring(L, nameForImageFormat(tileState.format));
+    lua_setfield(L, -2, "format");
+
+    lua_pushstring(L, nameForImageSize(tileState.size));
+    lua_setfield(L, -2, "size");
+
+    textureToLua(L, tileState.texture);
+    lua_setfield(L, -2, "texture");
 }
 
 /***
  @table Material
  @tfield string name
  @tfield string macro_name
+ @tfield {...TileState} tiles
  */
 void toLua(lua_State* L, Material* material) {
     if (!material) {
@@ -128,7 +257,7 @@ void toLua(lua_State* L, Material* material) {
         return;
     }
 
-    lua_createtable(L, 1, 0);
+    lua_createtable(L, 0, 0);
 
     luaLoadModuleFunction(L, "sk_mesh", "Material");
     lua_setmetatable(L, -2);
@@ -138,6 +267,20 @@ void toLua(lua_State* L, Material* material) {
 
     toLua(L, MaterialGenerator::MaterialIndexMacroName(material->mName));
     lua_setfield(L, -2, "macro_name");
+
+    lua_createtable(L, 0, material->mProperties.size());
+    for (auto it : material->mProperties) {
+        toLua(L, it.second);
+        lua_setfield(L, -2, it.first.c_str());
+    }
+    lua_setfield(L, -2, "properties");
+
+    lua_createtable(L, MAX_TILE_COUNT, 0);
+    for (int i = 0; i < MAX_TILE_COUNT; ++i) {
+        toLua(L, material->mState.tiles[i]);
+        lua_seti(L, -2, i + 1);
+    }
+    lua_setfield(L, -2, "tiles");
 
     lua_pushlightuserdata(L, material);
     lua_setfield(L, -2, "ptr");
@@ -186,6 +329,7 @@ int luaTransformMesh(lua_State* L) {
  @tfield sk_transform.Transform transform
  @tfield {sk_math.Vector3,...} vertices
  @tfield {sk_math.Vector3,...} normals
+ @tfield {sk_math.Vector3,...} uv
  @tfield {{number,number,number},...} faces
  @tfield Material material
  */
@@ -208,14 +352,35 @@ void meshToLua(lua_State* L, std::shared_ptr<ExtendedMesh> mesh) {
     lua_pushcfunction(L, luaTransformMesh);
     lua_setfield(L, -2, "transform");
 
-    toLuaLazyArray(L, mesh->mMesh->mVertices, mesh->mMesh->mNumVertices);
+    toLuaLazyArray<aiVector3D>(L, mesh->mMesh->mVertices, mesh->mMesh->mNumVertices);
     lua_setfield(L, -2, "vertices");
 
-    toLuaLazyArray(L, mesh->mMesh->mNormals, mesh->mMesh->mNumVertices);
+    toLuaLazyArray<aiVector3D>(L, mesh->mMesh->mNormals, mesh->mMesh->mNumVertices);
     lua_setfield(L, -2, "normals");
+
+    if (mesh->mMesh->mTextureCoords[0]) {
+        toLuaLazyArray<aiVector3D>(L, mesh->mMesh->mTextureCoords[0], mesh->mMesh->mNumVertices);
+    } else {
+        lua_pushnil(L);
+    }
+    lua_setfield(L, -2, "uv");
 
     toLua(L, mesh->mMesh->mFaces, mesh->mMesh->mNumFaces);
     lua_setfield(L, -2, "faces");
+
+    lua_createtable(L, AI_MAX_NUMBER_OF_COLOR_SETS, 0);
+    for (int i = 0; i < AI_MAX_NUMBER_OF_COLOR_SETS; ++i) {
+        if (!mesh->mMesh->mColors[i]) {
+            mesh->mMesh->mColors[i] = new aiColor4D[mesh->mMesh->mNumVertices];
+
+            for (unsigned vertexIndex = 0; vertexIndex < mesh->mMesh->mNumVertices; ++vertexIndex) {
+                mesh->mMesh->mColors[i][vertexIndex] = aiColor4D(1.0, 1.0, 1.0, 1.0);
+            }
+        }
+        toLuaLazyArray<aiColor4D>(L, mesh->mMesh->mColors[i], mesh->mMesh->mNumVertices);
+        lua_seti(L, -2, i + 1);
+    }
+    lua_setfield(L, -2, "colors");
 
     if (mesh->mMesh->mMaterialIndex >= 0 && mesh->mMesh->mMaterialIndex < gLuaCurrentScene->mNumMaterials) {
         auto material = gLuaCurrentSettings->mMaterials.find(gLuaCurrentScene->mMaterials[mesh->mMesh->mMaterialIndex]->GetName().C_Str());
@@ -402,7 +567,8 @@ int luaGetMeshVertexBuffer(lua_State* L) {
         Material::GetVertexType(material), 
         Material::TextureWidth(material), 
         Material::TextureHeight(material), 
-        suffix
+        suffix,
+        material->mDefaultVertexColor
     );
 
     luaLoadModuleFunction(L, "sk_definition_writer", "raw");
@@ -424,6 +590,23 @@ int buildMeshModule(lua_State* L) {
 
     lua_newtable(L);
     lua_setfield(L, -2, "Mesh");
+
+    lua_newtable(L);
+
+    lua_pushcfunction(L, luaTextureCrop);
+    lua_setfield(L, -2, "crop");
+
+    lua_pushcfunction(L, luaTextureResize);
+    lua_setfield(L, -2, "resize");
+
+    lua_pushcfunction(L, luaTextureData);
+    lua_setfield(L, -2, "get_data");
+    
+    lua_pushnil(L);
+    lua_copy(L, -2, -1);
+    lua_setfield(L, -2, "__index");
+
+    lua_setfield(L, -2, "Texture");
 
     lua_pushlightuserdata(L, scene);
     lua_pushlightuserdata(L, fileDefinition);

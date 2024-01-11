@@ -21,6 +21,8 @@
 #include "ball_launcher.h"
 #include "ball_catcher.h"
 #include "portal_gun.h"
+#include "clock.h"
+#include "security_camera.h"
 
 struct SavedPortal {
     struct Ray ray;
@@ -54,6 +56,8 @@ struct Scene {
     struct CollisionObject* dynamicColliders;
     struct BallLauncher* ballLaunchers;
     struct BallCatcher* ballCatchers;
+    struct Clock* clocks;
+    struct SecurityCamera* securityCameras;
     struct SavedPortal savedPortal;
     OSTime cpuTime;
     OSTime lastFrameStart;
@@ -69,12 +73,16 @@ struct Scene {
     u8 switchCount;
     u8 ballLancherCount;
     u8 ballCatcherCount;
+    u8 clockCount;
+    u8 securityCameraCount;
 
     u8 last_portal_indx_shot;
     u8 looked_wall_portalable_0;
     u8 looked_wall_portalable_1;
     u8 continuouslyAttemptingPortalOpen;
     u8 checkpointState;
+
+    float fadeInTimer;
 };
 
 extern struct Scene gScene;

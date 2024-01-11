@@ -237,6 +237,19 @@ struct BallCatcherDefinition {
     short signalIndex;
 };
 
+struct ClockDefinition {
+    struct Vector3 position;
+    struct Quaternion rotation;
+    short roomIndex;
+    short cutsceneIndex;
+};
+
+struct SecurityCameraDefinition {
+    struct Vector3 position;
+    struct Quaternion rotation;
+    short roomIndex;
+};
+
 struct LevelDefinition {
     struct CollisionObject* collisionQuads;
     struct StaticContentElement *staticContent;
@@ -265,6 +278,8 @@ struct LevelDefinition {
     struct SwitchDefinition* switches;
     struct BallLauncherDefinition* ballLaunchers;
     struct BallCatcherDefinition* ballCatchers;
+    struct ClockDefinition* clocks;
+    struct SecurityCameraDefinition* securityCameras;
     short collisionQuadCount;
     short staticContentCount;
     short portalSurfaceCount;
@@ -285,7 +300,10 @@ struct LevelDefinition {
     short switchCount;
     short ballLauncherCount;
     short ballCatcherCount;
+    short clockCount;
+    short securityCameraCount;
     short startLocation;
+    short playerAnimatorIndex;
 };
 
 #endif

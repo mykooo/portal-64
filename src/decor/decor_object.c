@@ -5,9 +5,32 @@
 #include "../util/memory.h"
 #include "../audio/soundplayer.h"
 #include "../util/time.h"
+#include "../util/dynamic_asset_loader.h"
 
 #define TIME_TO_FIZZLE      2.0f
 #define FIZZLE_TIME_STEP    (FIXED_DELTA_TIME / TIME_TO_FIZZLE)
+
+Gfx* decorBuildFizzleGfx(Gfx* gfxToRender, float fizzleTime, struct RenderState* renderState) {
+    if (fizzleTime <= 0.0f) {
+        return gfxToRender;
+    }
+
+    Gfx* result = renderStateAllocateDLChunk(renderState, 3);
+
+    Gfx* curr = result;
+
+    int fizzleTimeAsInt = (int)(255.0f * fizzleTime);
+
+    if (fizzleTimeAsInt > 255) {
+        fizzleTimeAsInt = 255;
+    }
+
+    gDPSetPrimColor(curr++, 255, 255, fizzleTimeAsInt, fizzleTimeAsInt, fizzleTimeAsInt, 255 - fizzleTimeAsInt);
+    gSPDisplayList(curr++, gfxToRender);
+    gSPEndDisplayList(curr++);
+
+    return result;
+}
 
 void decorObjectRender(void* data, struct DynamicRenderDataList* renderList, struct RenderState* renderState) {
     struct DecorObject* object = (struct DecorObject*)data;
@@ -20,33 +43,14 @@ void decorObjectRender(void* data, struct DynamicRenderDataList* renderList, str
 
     transformToMatrixL(&object->rigidBody.transform, matrix, SCENE_SCALE);
 
-    Gfx* gfxToRender;
-    
-    if (object->fizzleTime > 0.0f) {
-        gfxToRender = renderStateAllocateDLChunk(renderState, 3);
-
-        Gfx* curr = gfxToRender;
-
-        int fizzleTimeAsInt = (int)(255.0f * object->fizzleTime);
-
-        if (fizzleTimeAsInt > 255) {
-            fizzleTimeAsInt = 255;
-        }
-
-        gDPSetPrimColor(curr++, 255, 255, fizzleTimeAsInt, fizzleTimeAsInt, fizzleTimeAsInt, 255 - fizzleTimeAsInt);
-        gSPDisplayList(curr++, object->definition->graphics);
-        gSPEndDisplayList(curr++);
-    } else {
-        gfxToRender = object->definition->graphics;
-    }
-
-    dynamicRenderListAddData(
+    dynamicRenderListAddDataTouchingPortal(
         renderList, 
-        gfxToRender, 
+        decorBuildFizzleGfx(dynamicAssetModel(object->definition->dynamicModelIndex), object->fizzleTime, renderState), 
         matrix, 
         (object->fizzleTime > 0.0f) ? object->definition->materialIndexFizzled : object->definition->materialIndex, 
         &object->rigidBody.transform.position, 
-        NULL
+        NULL,
+        object->rigidBody.flags
     );
 }
 
@@ -73,6 +77,7 @@ void decorObjectInit(struct DecorObject* object, struct DecorObjectDefinition* d
         collisionSceneAddDynamicObject(&object->collisionObject);
     } else {
         rigidBodyInit(&object->rigidBody, 1.0f, 1.0f);
+        object->collisionObject.body = NULL;
     }
 
     object->definition = definition;
@@ -86,6 +91,8 @@ void decorObjectInit(struct DecorObject* object, struct DecorObjectDefinition* d
     object->originalRotation = at->rotation;
     object->originalRoom = room;
 
+    dynamicAssetModelPreload(definition->dynamicModelIndex);
+
     if (definition->colliderType.type != CollisionShapeTypeNone) {
         collisionObjectUpdateBB(&object->collisionObject);
     }
@@ -94,11 +101,7 @@ void decorObjectInit(struct DecorObject* object, struct DecorObjectDefinition* d
 
     dynamicSceneSetRoomFlags(object->dynamicId, ROOM_FLAG_FROM_INDEX(room));
 
-    if (definition->soundClipId != -1) {
-        object->playingSound = soundPlayerPlay(definition->soundClipId, 1.0f, 1.0f, &object->rigidBody.transform.position, &object->rigidBody.velocity);
-    } else {
-        object->playingSound = SOUND_ID_NONE;
-    }
+    object->playingSound = SOUND_ID_NONE;
 }
 
 void decorObjectClenaup(struct DecorObject* decorObject) {
@@ -114,6 +117,36 @@ void decorObjectDelete(struct DecorObject* decorObject) {
     free(decorObject);
 }
 
+enum FizzleCheckResult decorObjectUpdateFizzler(struct CollisionObject* collisionObject, float* fizzleTime) {
+    enum FizzleCheckResult result = FizzleCheckResultNone;
+
+    if (collisionObject->body && collisionObject->body->flags & RigidBodyFizzled) {
+
+        if (*fizzleTime == 0.0f) {
+            vector3Scale(&collisionObject->body->velocity, &collisionObject->body->velocity, 0.25f);
+
+            struct Quaternion randomRotation;
+            quatRandom(&randomRotation);
+            struct Vector3 randomAngularVelocity;
+            quatMultVector(&randomRotation, &gRight, &randomAngularVelocity);
+
+            vector3AddScaled(&collisionObject->body->angularVelocity, &randomAngularVelocity, 0.3f, &collisionObject->body->angularVelocity);
+
+            result = FizzleCheckResultStart;
+        }
+
+        *fizzleTime += FIZZLE_TIME_STEP;
+        collisionObject->body->flags &= ~RigidBodyFlagsGrabbable;
+        collisionObject->body->flags |= RigidBodyDisableGravity;
+
+        if (*fizzleTime > 1.0f) {
+            result = FizzleCheckResultEnd;
+        }
+    }
+
+    return result;
+}
+
 int decorObjectUpdate(struct DecorObject* decorObject) {
     if (decorObject->playingSound != SOUND_ID_NONE) {
         soundPlayerUpdatePosition(
@@ -123,31 +156,33 @@ int decorObjectUpdate(struct DecorObject* decorObject) {
         );
     }
 
-    if (decorObject->rigidBody.flags & RigidBodyFizzled) {
+    enum FizzleCheckResult fizzleResult = decorObjectUpdateFizzler(&decorObject->collisionObject, &decorObject->fizzleTime);
+
+    if (fizzleResult == FizzleCheckResultStart) {
+        if (decorObject->playingSound != SOUND_ID_NONE) {
+            soundPlayerStop(decorObject->playingSound);
+            decorObject->playingSound = SOUND_ID_NONE;
+            
+            if (decorObject->definition->soundFizzleId != SOUND_ID_NONE) {
+                decorObject->playingSound = soundPlayerPlay(decorObject->definition->soundFizzleId, 2.0f, 0.5f, &decorObject->rigidBody.transform.position, &decorObject->rigidBody.velocity);
+            }
+        }
+    } else if (fizzleResult == FizzleCheckResultEnd) {
         if (decorObject->definition->flags & DecorObjectFlagsImportant) {
             decorObjectReset(decorObject);
             dynamicSceneSetRoomFlags(decorObject->dynamicId, ROOM_FLAG_FROM_INDEX(decorObject->rigidBody.currentRoom));
             return 1;
         }
 
-        if (decorObject->fizzleTime == 0.0f) {
-            vector3Scale(&decorObject->rigidBody.velocity, &decorObject->rigidBody.velocity, 0.25f);
-
-            struct Quaternion randomRotation;
-            quatRandom(&randomRotation);
-            struct Vector3 randomAngularVelocity;
-            quatMultVector(&randomRotation, &gRight, &randomAngularVelocity);
-
-            vector3AddScaled(&decorObject->rigidBody.angularVelocity, &randomAngularVelocity, 0.6f, &decorObject->rigidBody.angularVelocity);
+        if (soundPlayerIsPlaying(decorObject->playingSound)) {
+            return 1;
         }
 
-        decorObject->fizzleTime += FIZZLE_TIME_STEP;
-        decorObject->collisionObject.body->flags &= ~RigidBodyFlagsGrabbable;
-        decorObject->collisionObject.body->flags |= RigidBodyDisableGravity;
+        return 0;
+    }
 
-        if (decorObject->fizzleTime > 1.0f) {
-            return 0;
-        }
+    if (decorObject->definition->soundClipId != -1 && decorObject->playingSound == SOUND_ID_NONE && decorObject->fizzleTime == 0.0f) {
+        decorObject->playingSound = soundPlayerPlay(decorObject->definition->soundClipId, 1.0f, 1.0f, &decorObject->rigidBody.transform.position, &decorObject->rigidBody.velocity);
     }
 
     dynamicSceneSetRoomFlags(decorObject->dynamicId, ROOM_FLAG_FROM_INDEX(decorObject->rigidBody.currentRoom));

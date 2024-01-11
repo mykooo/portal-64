@@ -1,11 +1,8 @@
 #include "decor_object_list.h"
 
-#include "../../build/assets/models/props/autoportal_frame/autoportal_frame.h"
-#include "../../build/assets/models/props/cylinder_test.h"
-#include "../../build/assets/models/cube/cube.h"
-#include "../../build/assets/models/props/radio.h"
 #include "../../build/assets/materials/static.h"
 #include "../../build/src/audio/clips.h"
+#include "../../build/assets/models/dynamic_model_list.h"
 
 #include "../physics/collision_cylinder.h"
 #include "../physics/collision_box.h"
@@ -46,9 +43,10 @@ struct DecorObjectDefinition gDecorObjectDefinitions[] = {
         },
         1.0f,
         0.92f,
-        &props_cylinder_test_model_gfx[0],
+        PROPS_CYLINDER_TEST_DYNAMIC_MODEL,
         .materialIndex = PLASTIC_PLASTICWALL001A_INDEX,
         .soundClipId = -1,
+        .soundFizzleId = -1,
     },
     [DECOR_TYPE_RADIO] = {
         {
@@ -60,9 +58,11 @@ struct DecorObjectDefinition gDecorObjectDefinitions[] = {
         },
         0.2f,
         0.4f,
-        &props_radio_model_gfx[0],
+        PROPS_RADIO_DYNAMIC_MODEL,
         .materialIndex = RADIO_INDEX,
+        .materialIndexFizzled = RADIO_FIZZLED_INDEX,
         .soundClipId = SOUNDS_LOOPING_RADIO_MIX,
+        .soundFizzleId = SOUNDS_DINOSAUR_FIZZLE,
     },
     [DECOR_TYPE_CUBE] = {
         {
@@ -74,10 +74,11 @@ struct DecorObjectDefinition gDecorObjectDefinitions[] = {
         },
         2.0f, 
         0.55f,
-        &cube_cube_model_gfx[0],
+        CUBE_CUBE_DYNAMIC_MODEL,
         .materialIndex = CUBE_INDEX,
         .materialIndexFizzled = CUBE_FIZZLED_INDEX,
         .soundClipId = -1,
+        .soundFizzleId = -1,
         .flags = DecorObjectFlagsImportant,
     },
     [DECOR_TYPE_CUBE_UNIMPORTANT] = {
@@ -90,10 +91,11 @@ struct DecorObjectDefinition gDecorObjectDefinitions[] = {
         },
         2.0f, 
         0.55f,
-        &cube_cube_model_gfx[0],
+        CUBE_CUBE_DYNAMIC_MODEL,
         .materialIndex = CUBE_INDEX,
         .materialIndexFizzled = CUBE_FIZZLED_INDEX,
         .soundClipId = -1,
+        .soundFizzleId = -1,
     },
     [DECOR_TYPE_AUTOPORTAL_FRAME] = {
         {
@@ -105,9 +107,10 @@ struct DecorObjectDefinition gDecorObjectDefinitions[] = {
         },
         0.0f, 
         1.0f,
-        &props_autoportal_frame_autoportal_frame_model_gfx[0],
+        PROPS_AUTOPORTAL_FRAME_AUTOPORTAL_FRAME_DYNAMIC_MODEL,
         .materialIndex = AUTOPORTAL_FRAME_INDEX,
         .soundClipId = -1,
+        .soundFizzleId = -1,
     }
 };
 

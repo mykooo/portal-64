@@ -11,6 +11,7 @@
 #define RIGID_BODY_NO_ROOM  0xFFFF
 
 #define MAX_PORTAL_SPEED (1000.0f / 64.0f)
+#define MIN_PORTAL_SPEED (300.0f / 64.0f)
 #define PORTAL_EXIT_XY_CLAMP_DISTANCE (0.15f)
 
 enum RigidBodyFlags {
@@ -53,10 +54,12 @@ struct RigidBody {
     
     enum RigidBodyFlags flags;
     unsigned short currentRoom;
+    unsigned short sleepFrames;
 };
 
 void rigidBodyInit(struct RigidBody* rigidBody, float mass, float momentOfIniteria);
 void rigidBodyMarkKinematic(struct RigidBody* rigidBody);
+void rigidBodyUnmarkKinematic(struct RigidBody* rigidBody, float mass, float momentOfIniteria);
 void rigidBodyAppyImpulse(struct RigidBody* rigidBody, struct Vector3* worldPoint, struct Vector3* impulse);
 void rigidBodyUpdate(struct RigidBody* rigidBody);
 void rigidBodyVelocityAtLocalPoint(struct RigidBody* rigidBody, struct Vector3* localPoint, struct Vector3* worldVelocity);

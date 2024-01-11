@@ -3,7 +3,6 @@
 
 #include "defs.h"
 #include "graphics/graphics.h"
-#include "models/models.h"
 #include "materials/shadow_caster.h"
 #include "materials/subject.h"
 #include "materials/light.h"
@@ -47,6 +46,8 @@ Lights1 gSceneLights = gdSPDefLights1(128, 128, 128, 128, 128, 128, 0, 127, 0);
 
 #define LEVEL_INDEX_WITH_GUN_0  2
 #define LEVEL_INDEX_WITH_GUN_1  8
+
+#define FADE_IN_
 
 void sceneUpdateListeners(struct Scene* scene);
 
@@ -213,6 +214,17 @@ void sceneInitNoPauseMenu(struct Scene* scene) {
         ballCatcherInit(&scene->ballCatchers[i], &gCurrentLevel->ballCatchers[i]);
     }
 
+    scene->clockCount = gCurrentLevel->clockCount;
+    scene->clocks = malloc(sizeof(struct Clock) * scene->clockCount);
+    for (int i = 0; i < scene->clockCount; ++i) {
+        clockInit(&scene->clocks[i], &gCurrentLevel->clocks[i]);
+    }
+
+    scene->securityCameraCount = gCurrentLevel->securityCameraCount;
+    scene->securityCameras = malloc(sizeof(struct SecurityCamera) * scene->securityCameraCount);
+    for (int i = 0 ; i < scene->securityCameraCount; ++i) {
+        securityCameraInit(&scene->securityCameras[i], &gCurrentLevel->securityCameras[i]);
+    }
 
     scene->last_portal_indx_shot=-1;
     scene->looked_wall_portalable_0=0;
@@ -225,6 +237,12 @@ void sceneInitNoPauseMenu(struct Scene* scene) {
     sceneInitDynamicColliders(scene);
 
     sceneAnimatorInit(&scene->animator, gCurrentLevel->animations, gCurrentLevel->animationInfoCount);
+
+    if (gCurrentLevelIndex == 0) {
+        scene->fadeInTimer = INTRO_TOTAL_TIME;
+    } else {
+        scene->fadeInTimer = 0.0f;
+    }
 }
 
 #define SOLID_COLOR        0, 0, 0, ENVIRONMENT, 0, 0, 0, ENVIRONMENT
@@ -275,7 +293,7 @@ void sceneRender(struct Scene* scene, struct RenderState* renderState, struct Gr
     gDPSetRenderMode(renderState->dl++, G_RM_OPA_SURF, G_RM_OPA_SURF2);
     gSPGeometryMode(renderState->dl++, G_ZBUFFER | G_LIGHTING | G_CULL_BOTH, G_SHADE);
 
-    hudRender(renderState, &scene->player, scene->last_portal_indx_shot, scene->looked_wall_portalable_0, scene->looked_wall_portalable_1);
+    hudRender(renderState, &scene->player, scene->last_portal_indx_shot, scene->looked_wall_portalable_0, scene->looked_wall_portalable_1, scene->fadeInTimer);
 
     if (gGameMenu.state != GameMenuStateResumeGame) {
         gameMenuRender(&gGameMenu, renderState, task);
@@ -389,14 +407,14 @@ void sceneCheckPortals(struct Scene* scene) {
 #define MAX_LISTEN_THROUGH_PORTAL_DISTANCE 3.0f
 
 int sceneUpdatePortalListener(struct Scene* scene, int portalIndex, int listenerIndex) {
-    if (vector3DistSqrd(&scene->player.lookTransform.position, &scene->portals[portalIndex].transform.position) > MAX_LISTEN_THROUGH_PORTAL_DISTANCE * MAX_LISTEN_THROUGH_PORTAL_DISTANCE) {
+    if (vector3DistSqrd(&scene->player.lookTransform.position, &scene->portals[portalIndex].rigidBody.transform.position) > MAX_LISTEN_THROUGH_PORTAL_DISTANCE * MAX_LISTEN_THROUGH_PORTAL_DISTANCE) {
         return 0;
     }
 
     struct Transform otherInverse;
-    transformInvert(&scene->portals[1 - portalIndex].transform, &otherInverse);
+    transformInvert(&scene->portals[1 - portalIndex].rigidBody.transform, &otherInverse);
     struct Transform portalCombined;
-    transformConcat(&scene->portals[portalIndex].transform, &otherInverse, &portalCombined);
+    transformConcat(&scene->portals[portalIndex].rigidBody.transform, &otherInverse, &portalCombined);
 
     struct Transform relativeTransform;
     transformConcat(&portalCombined, &scene->player.lookTransform, &relativeTransform);
@@ -455,6 +473,7 @@ void sceneUpdatePortalVelocity(struct Scene* scene) {
 
         // update portal position
         gCollisionScene.portalTransforms[i]->position = newPos;
+        collisionObjectUpdateBB(&portal->collisionObject);
     }
 }
 
@@ -516,6 +535,36 @@ void sceneUpdate(struct Scene* scene) {
 
     signalsReset();
 
+    if (sceneAnimatorIsRunning(&scene->animator, gCurrentLevel->playerAnimatorIndex)) {
+        scene->player.flags |= PlayerInCutscene;
+        sceneAnimatorTransformForIndex(&scene->animator, gCurrentLevel->playerAnimatorIndex, &scene->player.lookTransform);
+        scene->player.body.transform = scene->player.lookTransform;
+    } else if (scene->player.flags & PlayerInCutscene) {
+        scene->player.flags &= ~PlayerInCutscene;
+    }
+
+    // objects that can fizzle need to update before the player
+    int decorWriteIndex = 0;
+
+    for (int i = 0; i < scene->decorCount; ++i) {
+        if (!decorObjectUpdate(scene->decor[i])) {
+            decorObjectDelete(scene->decor[i]);
+            continue;;
+        }
+
+        if (decorWriteIndex != i) {
+            scene->decor[decorWriteIndex] = scene->decor[i];
+        }
+
+        ++decorWriteIndex;
+    }
+
+    scene->decorCount = decorWriteIndex;
+
+    for (int i = 0; i < scene->securityCameraCount; ++i) {
+        securityCameraUpdate(&scene->securityCameras[i]);
+    }
+
     portalGunUpdate(&scene->portalGun, &scene->player);
     playerUpdate(&scene->player);
     sceneUpdateListeners(scene);
@@ -544,23 +593,6 @@ void sceneUpdate(struct Scene* scene) {
     for (int i = 0; i < scene->doorCount; ++i) {
         doorUpdate(&scene->doors[i]);
     }
-
-    int decorWriteIndex = 0;
-
-    for (int i = 0; i < scene->decorCount; ++i) {
-        if (!decorObjectUpdate(scene->decor[i])) {
-            decorObjectDelete(scene->decor[i]);
-            continue;;
-        }
-
-        if (decorWriteIndex != i) {
-            scene->decor[decorWriteIndex] = scene->decor[i];
-        }
-
-        ++decorWriteIndex;
-    }
-
-    scene->decorCount = decorWriteIndex;
 
     for (int i = 0; i < scene->fizzlerCount; ++i) {
         fizzlerUpdate(&scene->fizzlers[i]);
@@ -669,10 +701,25 @@ void sceneUpdate(struct Scene* scene) {
     if (controllerGetButtonDown(2, L_TRIG)) {
         levelQueueLoad(NEXT_LEVEL, NULL, NULL);
     }
+
+    if (scene->fadeInTimer > 0.0f) {
+        scene->fadeInTimer -= FIXED_DELTA_TIME;
+
+        if (scene->fadeInTimer < 0.0f) {
+            scene->fadeInTimer = 0.0f;
+        }
+    }
 }
 
 void sceneQueueCheckpoint(struct Scene* scene) {
     scene->checkpointState = SceneCheckpointStateReady;
+}
+
+
+void sceneCheckSecurityCamera(struct Scene* scene, struct Portal* portal) {
+    struct Box3D portalBB;
+    portalCalculateBB(portal, &portalBB);
+    securityCamerasCheckPortal(scene->securityCameras, scene->securityCameraCount, &portalBB);
 }
 
 int sceneOpenPortal(struct Scene* scene, struct Transform* at, int transformIndex, int portalIndex, struct PortalSurfaceMappingRange surfaceMapping, struct CollisionObject* collisionObject, int roomIndex, int fromPlayer, int just_checking) {
@@ -689,6 +736,8 @@ int sceneOpenPortal(struct Scene* scene, struct Transform* at, int transformInde
         finalAt = *at;
     }
 
+    int wasOpen = collisionSceneIsPortalOpen();
+
     for (int indexIndex = surfaceMapping.minPortalIndex; indexIndex < surfaceMapping.maxPortalIndex; ++indexIndex) {
         int surfaceIndex = gCurrentLevel->portalSurfaceMappingIndices[indexIndex];
 
@@ -700,22 +749,26 @@ int sceneOpenPortal(struct Scene* scene, struct Transform* at, int transformInde
             if (just_checking){
                 return 1;
             }
-            soundPlayerPlay(soundsPortalOpen2, 1.0f, 1.0f, &at->position, &gZeroVec);
+
+            collisionScenePushObjectsOutOfPortal(portalIndex);
 
             // the portal position may have been adjusted
             if (transformIndex != NO_TRANSFORM_INDEX) {
                 portal->relativePos = finalAt.position;
-                transformConcat(&relativeToTransform, &finalAt, &portal->transform);
+                transformConcat(&relativeToTransform, &finalAt, &portal->rigidBody.transform);
             } else {
-                portal->transform = finalAt;
+                portal->rigidBody.transform = finalAt;
             }
             
             gCollisionScene.portalVelocity[portalIndex] = gZeroVec;
             portal->transformIndex = transformIndex;
-            portal->roomIndex = roomIndex;
+            portal->rigidBody.currentRoom = roomIndex;
+            portal->colliderIndex = levelQuadIndex(collisionObject);
             portal->scale = 0.0f;
-            gCollisionScene.portalTransforms[portalIndex] = &portal->transform;
-            gCollisionScene.portalRooms[portalIndex] = roomIndex;
+            collisionSceneSetPortal(portalIndex, &portal->rigidBody.transform, roomIndex, portal->colliderIndex);
+            collisionObjectUpdateBB(&portal->collisionObject);
+
+            soundPlayerPlay(soundsPortalOpen2, 1.0f, 1.0f, &portal->rigidBody.transform.position, &gZeroVec);
 
             if (fromPlayer) {
                 portal->flags |= PortalFlagsPlayerPortal;
@@ -726,9 +779,24 @@ int sceneOpenPortal(struct Scene* scene, struct Transform* at, int transformInde
             if (collisionSceneIsPortalOpen()) {
                 // the second portal is fully transparent right away
                 portal->opacity = 0.0f;
+
+                if (!fromPlayer) {
+                    // flash other portal to make it easier to tell
+                    // something changed and play sound near other portal
+                    struct Portal* otherPortal = &scene->portals[1 - portalIndex];
+                    otherPortal->opacity = 1.0f;
+                    soundPlayerPlay(soundsPortalOpen2, 1.0f, 1.0f, &otherPortal->rigidBody.transform.position, &gZeroVec);
+                }
+
+                sceneCheckSecurityCamera(scene, portal);
+
+                if (!wasOpen) {
+                    sceneCheckSecurityCamera(scene, &scene->portals[1 - portalIndex]);
+                }
             }
+
             contactSolverCheckPortalContacts(&gContactSolver, collisionObject);
-            ballBurnFilterOnPortal(&portal->transform, portalIndex);
+            ballBurnFilterOnPortal(&portal->rigidBody.transform, portalIndex);
             playerSignalPortalChanged(&scene->player);
             return 1;
         }
@@ -744,8 +812,6 @@ int sceneDynamicBoxIndex(struct Scene* scene, struct CollisionObject* hitObject)
 
     return hitObject - scene->dynamicColliders;
 }
-
-
 
 int sceneDetermineSurfaceMapping(struct Scene* scene, struct CollisionObject* hitObject, struct PortalSurfaceMappingRange* mappingRangeOut, int* relativeToOut) {
     int quadIndex = levelQuadIndex(hitObject);
@@ -827,9 +893,12 @@ void sceneClosePortal(struct Scene* scene, int portalIndex) {
     else if (gCollisionScene.portalTransforms[portalIndex]) {
         soundPlayerPlay(soundsPortalFizzle, 1.0f, 1.0f, &gCollisionScene.portalTransforms[portalIndex]->position, &gZeroVec);
         gCollisionScene.portalTransforms[portalIndex] = NULL;
+        gCollisionScene.portalColliderIndex[portalIndex] = -1;
         scene->portals[portalIndex].flags |= PortalFlagsNeedsNewHole;
         scene->portals[portalIndex].portalSurfaceIndex = -1;
         scene->portals[portalIndex].transformIndex = NO_TRANSFORM_INDEX;
+
+        collisionSceneRemoveDynamicObject(&scene->portals[portalIndex].collisionObject);
     }
     return;
 }
