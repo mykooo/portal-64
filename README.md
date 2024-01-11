@@ -11,19 +11,19 @@ Latest current progress video on Youtube:
 
 ## Download
 
-You can download the ROM here if you own a copy of Portal for PC
+You can download the ROM here **if you own a copy of PC version of Portal!**
 
 [Rom Patcher](https://lambertjamesd.github.io/RomPatcher.js/index.html)
 
 ## Overview
 
-This project aims to reproduce Valve's original Portal, playable on the N64. 
+This project aims to reproduce Valve's original Portal, playable on the N64.
 
-[Releases](https://github.com/lambertjamesd/portal64/releases) of this game are released in the form of a .bps patch, and produce a fully playable N64 ROM that can either be played through an emulator or on a physical N64 game cartridge. 
+[Releases](https://github.com/lambertjamesd/portal64/releases) of this game are released in the form of a .bps patch, and produce a fully playable N64 ROM that can either be played through an emulator or on a physical N64 game cartridge.
 
 Please follow specific release instructions to get the ROM running on your target hardware.
 
-Because this demake has been in development for over a year, it has made significant progress in both gameplay systems and fidelity including: 
+Because this demake has been in development for over a year, it has made significant progress in both gameplay systems and fidelity including:
 
 - Twelve+ test chambers completed
 - Fully functioning portals, and gun
@@ -36,7 +36,7 @@ Because this demake has been in development for over a year, it has made signifi
 - Eye-Candy (Reflections, ...)
 - Much more!
 
-This is a community driven project that welcomes any and all game testers and or [Contributors](./documentation/contributing.md). 
+This is a community driven project that welcomes any and all game testers and or [Contributors](./documentation/contributing.md).
 
 Updates are constantly being made to the game, so we recommend checking out the author's [YouTube Channel](https://www.youtube.com/@james.lambert) for the latest updates.
 
@@ -50,7 +50,7 @@ git clone https://github.com/lambertjamesd/portal64.git
 cd portal64
 ```
 
-## Setup and install dependencies. 
+## Setup and install dependencies.
 
 The following commands allow the scripts to run on the system, then it runs the setup.
 
@@ -65,7 +65,7 @@ sudo chmod +x tools/setup.sh
 
 Alternative setup methods include [Docker setup](./documentation/docker_setup.md) and [Manual setup](./documentation/manual_setup.md).
 
-Whatever setup you choose, you will still need to add the Portal folder to portal64/`vpk/` OR create a symbolic link to the Portal folder.   
+Whatever setup you choose, you will still need to add the Portal folder to portal64/`vpk/` OR create a symbolic link to the Portal folder.
 
 (see [vpk/add_vpk_here.md](./vpk/add_vpk_here.md) for more details!). Symlink does not work for Docker builds.
 
@@ -88,7 +88,7 @@ make clean
 <br />
 
 ## Current New Feature TODO List
-- [ ] check if display list is long enough 
+- [ ] check if display list is long enough
 - [ ] pausing while glados is speaking can end her speech early
 - [x] test chamber 10 without jumping
 - [x] check collider flags when filtering contacts
@@ -116,6 +116,6 @@ make clean
 
 ## Current Bug TODO List (Hardware Verified) (High->Low priority)
 ----------------------- v8
-- [ ] Two wall portals next to eachother can be used to clip any object out of any level by pushing it into corner, then dropping. 
+- [ ] Two wall portals next to eachother can be used to clip any object out of any level by pushing it into corner, then dropping.
 - [x] Passing into a ceiling portal can sometimes mess with the player rotation
 - [x] player can clip through back of elevator by jumping and strafeing at the back corners while inside.
